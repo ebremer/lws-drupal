@@ -4,10 +4,29 @@ lws_authz.settings:
   mapping:
     authorization_server:
       type: string
-      label: 'The trusted authorization server of storages that name none, by ID. Empty for none.'
+      label: 'The authorization server of storages that name none: "local" for this site''s own, or the ID of a trusted server.'
     clock_skew:
       type: integer
-      label: 'The clock skew allowed when checking the times in an access token, in seconds.'
+      label: 'The clock skew allowed when checking the times in access tokens and credentials, in seconds.'
+    token_lifetime:
+      type: integer
+      label: 'The lifetime of the access tokens this site issues, in seconds.'
+    suites:
+      type: sequence
+      label: 'The authentication suites whose credentials this site exchanges for access tokens.'
+      sequence:
+        type: string
+        label: 'Authentication suite plugin ID'
+    rate_limits:
+      type: mapping
+      label: 'Token endpoint rate limits'
+      mapping:
+        client:
+          type: integer
+          label: 'Token requests per minute from one client address.'
+        subject:
+          type: integer
+          label: 'Tokens issued per minute to one subject.'
 
 lws_authz.trusted_as.*:
   type: config_entity

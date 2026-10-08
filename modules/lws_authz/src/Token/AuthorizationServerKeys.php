@@ -9,15 +9,16 @@ use Drupal\Core\Cache\CacheBackendInterface;
 use Drupal\Core\Flood\FloodInterface;
 use Drupal\lws\Outbound\OutboundHttp;
 use Drupal\lws\Outbound\OutboundHttpException;
-use Drupal\lws_authz\Entity\TrustedAuthorizationServerInterface;
+use Drupal\lws_authz\AuthorizationServerInterface;
 use Ebremer\Lws\Auth\AuthorizationServerMetadata;
 use Ebremer\Lws\Exception\ProtocolException;
 use Psr\Log\LoggerInterface;
 
 /**
- * The signing keys of trusted authorization servers.
+ * The signing keys of authorization servers.
  *
- * Pinned keys come from the server's configuration. Otherwise the keys are
+ * Pinned keys come from the server's configuration, and this site's own
+ * server gives its keys the same way. Otherwise the keys are
  * discovered as LWS Core §5.2.4.2 requires: the server's metadata at
  * /.well-known/lws-configuration (RFC 8414 §3.1, which puts the well-known
  * segment before any path of the issuer) must name the issuer itself, and its
@@ -61,7 +62,7 @@ final class AuthorizationServerKeys {
   /**
    * The keys of an authorization server.
    *
-   * @param \Drupal\lws_authz\Entity\TrustedAuthorizationServerInterface $server
+   * @param \Drupal\lws_authz\AuthorizationServerInterface $server
    *   The server.
    * @param bool $refresh
    *   Whether to fetch discovered keys again, because a token named a key the
@@ -70,7 +71,7 @@ final class AuthorizationServerKeys {
    * @throws \Drupal\lws_authz\Token\KeysUnavailableException
    *   When the keys cannot be obtained.
    */
-  public function keySet(TrustedAuthorizationServerInterface $server, bool $refresh = FALSE): JsonWebKeySet {
+  public function keySet(AuthorizationServerInterface $server, bool $refresh = FALSE): JsonWebKeySet {
     $pinned = $server->getJwks();
     if ($pinned !== NULL) {
       try {

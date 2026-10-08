@@ -8,6 +8,7 @@ use Drupal\Core\Extension\Requirement\RequirementSeverity;
 use Drupal\Core\Form\FormState;
 use Drupal\KernelTests\KernelTestBase;
 use Drupal\lws_authz\Entity\TrustedAuthorizationServerInterface;
+use Drupal\lws_authz\Form\AuthorizationSettingsForm;
 use Drupal\lws_authz\Hook\LwsAuthzRequirements;
 use Ebremer\Lws\Auth\SigningKey;
 use PHPUnit\Framework\Attributes\Group;
@@ -15,6 +16,8 @@ use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
 
 /**
  * Tests trusted authorization servers: the entity, its form and its status.
+ *
+ * And the settings, which choose between them and this site's own server.
  */
 #[Group('lws')]
 #[RunTestsInSeparateProcesses]
@@ -93,10 +96,10 @@ final class TrustedAuthorizationServerTest extends KernelTestBase {
     $this->assertNull($this->load('other')?->getJwks());
     $this->assertSame('main', $this->config('lws_authz.settings')->get('authorization_server'));
 
-    // Unchecking "default" on the default server leaves storages with none.
+    // Unchecking "default" on the default server gives storages this site's.
     $values = ['label' => 'Main', 'issuer' => 'https://as.example', 'jwks' => '', 'default' => NULL];
     $this->assertSame([], $this->submit($values, $this->load('main')));
-    $this->assertSame('', $this->config('lws_authz.settings')->get('authorization_server'));
+    $this->assertSame('local', $this->config('lws_authz.settings')->get('authorization_server'));
   }
 
   /**
@@ -112,15 +115,20 @@ final class TrustedAuthorizationServerTest extends KernelTestBase {
     $errors = $this->submit($bad + ['issuer' => 'https://as.example', 'jwks' => $rsa]);
     $this->assertStringContainsString('no EC P-256', $errors['jwks']);
     $this->assertNull($this->load('bad'));
+
+    // "local" names this site's own server.
+    $errors = $this->submit(['label' => 'Local', 'id' => 'local', 'issuer' => 'https://as.example', 'jwks' => '']);
+    $this->assertArrayHasKey('id', $errors);
+    $this->assertNull($this->load('local'));
   }
 
   /**
-   * Tests that deleting the default server leaves storages with none.
+   * Tests that deleting the default server makes this site's the default.
    */
   public function testDeleteDefault(): void {
     $this->submit(['label' => 'Main', 'id' => 'main', 'issuer' => 'https://as.example', 'jwks' => '', 'default' => 1]);
     $this->load('main')?->delete();
-    $this->assertSame('', $this->config('lws_authz.settings')->get('authorization_server'));
+    $this->assertSame('local', $this->config('lws_authz.settings')->get('authorization_server'));
   }
 
   /**
@@ -128,13 +136,60 @@ final class TrustedAuthorizationServerTest extends KernelTestBase {
    */
   public function testRequirements(): void {
     $requirements = $this->container->get('class_resolver')->getInstanceFromDefinition(LwsAuthzRequirements::class);
-    $this->assertSame(RequirementSeverity::Warning, $requirements->runtime()['lws_authz_default_server']['severity']);
+    // This site's server is the default, and has no key directory.
+    $runtime = $requirements->runtime();
+    $this->assertSame(RequirementSeverity::Error, $runtime['lws_authz_default_server']['severity']);
+    $this->assertSame(RequirementSeverity::Warning, $runtime['lws_authz_local_server']['severity']);
 
     $this->submit(['label' => 'Main', 'id' => 'main', 'issuer' => 'https://as.example', 'jwks' => '', 'default' => 1]);
-    $this->assertSame(RequirementSeverity::OK, $requirements->runtime()['lws_authz_default_server']['severity']);
+    $runtime = $requirements->runtime();
+    $this->assertSame(RequirementSeverity::OK, $runtime['lws_authz_default_server']['severity']);
 
     $this->config('lws_authz.settings')->set('authorization_server', 'gone')->save();
-    $this->assertSame(RequirementSeverity::Error, $requirements->runtime()['lws_authz_default_server']['severity']);
+    $runtime = $requirements->runtime();
+    $this->assertSame(RequirementSeverity::Error, $runtime['lws_authz_default_server']['severity']);
+
+    $this->setSetting('lws_authz_key_directory', $this->siteDirectory . '/keys');
+    $this->config('lws_authz.settings')->set('authorization_server', 'local')->save();
+    $runtime = $requirements->runtime();
+    $this->assertSame(RequirementSeverity::OK, $runtime['lws_authz_default_server']['severity']);
+    $this->assertSame(RequirementSeverity::OK, $runtime['lws_authz_local_server']['severity']);
+  }
+
+  /**
+   * Tests the settings form.
+   */
+  public function testSettingsForm(): void {
+    $this->submit(['label' => 'Main', 'id' => 'main', 'issuer' => 'https://as.example', 'jwks' => '', 'default' => NULL]);
+    $form = $this->container->get('class_resolver')->getInstanceFromDefinition(AuthorizationSettingsForm::class);
+    $built = $this->container->get('form_builder')->getForm($form);
+    $this->assertSame(['local', 'main'], array_keys($built['authorization_server']['#options']));
+    $this->assertSame('local', $built['authorization_server']['#default_value']);
+    $this->assertArrayHasKey('ssi_cid', $built['local']['suites']['#options']);
+
+    $values = [
+      'authorization_server' => 'main',
+      'clock_skew' => 30,
+      'suites' => [],
+      'token_lifetime' => 120,
+      'rate_limit_client' => 10,
+      'rate_limit_subject' => 5,
+      'op' => 'Save configuration',
+    ];
+    $formState = (new FormState())->setValues($values);
+    $this->container->get('form_builder')->submitForm($form, $formState);
+    $this->assertSame([], $formState->getErrors());
+    $settings = $this->config('lws_authz.settings');
+    $this->assertSame('main', $settings->get('authorization_server'));
+    $this->assertSame(30, $settings->get('clock_skew'));
+    $this->assertSame([], $settings->get('suites'));
+    $this->assertSame(120, $settings->get('token_lifetime'));
+    $this->assertSame(['client' => 10, 'subject' => 5], $settings->get('rate_limits'));
+
+    // The form refuses a lifetime above an hour.
+    $formState = (new FormState())->setValues(['token_lifetime' => 7200] + $values);
+    $this->container->get('form_builder')->submitForm($form, $formState);
+    $this->assertArrayHasKey('token_lifetime', $formState->getErrors());
   }
 
 }

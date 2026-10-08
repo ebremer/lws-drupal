@@ -1,6 +1,6 @@
 name: 'LWS Authorization'
 type: module
-description: 'Validates W3C Linked Web Storage (LWS) access tokens from trusted authorization servers, and decides access to storages.'
+description: 'Issues and validates W3C Linked Web Storage (LWS) access tokens, with an authorization server of its own or trusted external ones, and decides access to storages.'
 package: 'Linked Web Storage'
 core_version_requirement: ^11.3
 configure: entity.lws_trusted_as.collection

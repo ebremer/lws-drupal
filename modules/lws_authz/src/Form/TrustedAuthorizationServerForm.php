@@ -9,6 +9,7 @@ use Drupal\Core\Entity\EntityInterface;
 use Drupal\Core\Form\FormStateInterface;
 use Drupal\lws_authz\Entity\TrustedAuthorizationServer;
 use Drupal\lws_authz\Entity\TrustedAuthorizationServerInterface;
+use Drupal\lws_authz\Server\LocalAuthorizationServer;
 use Drupal\lws_authz\Token\JsonWebKeySet;
 
 /**
@@ -43,7 +44,7 @@ final class TrustedAuthorizationServerForm extends EntityForm {
       '#type' => 'machine_name',
       '#default_value' => $server->id(),
       '#machine_name' => [
-        'exists' => [TrustedAuthorizationServer::class, 'load'],
+        'exists' => [self::class, 'idExists'],
       ],
       '#disabled' => !$server->isNew(),
     ];
@@ -64,10 +65,17 @@ final class TrustedAuthorizationServerForm extends EntityForm {
     $form['default'] = [
       '#type' => 'checkbox',
       '#title' => $this->t('Default for storages'),
-      '#description' => $this->t('Storages that name no authorization server trust this one.'),
+      '#description' => $this->t("Storages that name no authorization server trust this one, instead of this site's own."),
       '#default_value' => !$server->isNew() && $server->id() === $this->config('lws_authz.settings')->get('authorization_server'),
     ];
     return $form;
+  }
+
+  /**
+   * Whether a machine name is taken; "local" names this site's own server.
+   */
+  public static function idExists(string $id): bool {
+    return $id === LocalAuthorizationServer::ID || TrustedAuthorizationServer::load($id) !== NULL;
   }
 
   /**
@@ -141,7 +149,7 @@ final class TrustedAuthorizationServerForm extends EntityForm {
       $settings->set('authorization_server', $id)->save();
     }
     elseif ($settings->get('authorization_server') === $id) {
-      $settings->set('authorization_server', '')->save();
+      $settings->set('authorization_server', LocalAuthorizationServer::ID)->save();
     }
     $this->messenger()->addStatus($status === SAVED_NEW
       ? $this->t('Added the authorization server %label.', ['%label' => (string) $this->entity->label()])

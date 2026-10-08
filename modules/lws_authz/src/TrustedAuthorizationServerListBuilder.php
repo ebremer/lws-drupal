@@ -78,7 +78,7 @@ final class TrustedAuthorizationServerListBuilder extends ConfigEntityListBuilde
    */
   public function render(): array {
     $build = parent::render();
-    $build['table']['#empty'] = $this->t('No authorization servers are trusted, so no storage accepts access tokens.');
+    $build['table']['#empty'] = $this->t("No external authorization servers are trusted: storages accept the access tokens of this site's own.");
     return $build;
   }
 

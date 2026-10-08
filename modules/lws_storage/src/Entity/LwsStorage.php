@@ -88,7 +88,7 @@ class LwsStorage extends ContentEntityBase implements LwsStorageInterface {
 
     $fields['authorization_server'] = BaseFieldDefinition::create('string')
       ->setLabel(new TranslatableMarkup('Authorization server'))
-      ->setDescription(new TranslatableMarkup('The trusted authorization server whose access tokens the storage accepts, by ID. Empty for the site default.'))
+      ->setDescription(new TranslatableMarkup('The authorization server whose access tokens the storage accepts, by ID: "local" for this site\'s own, or a trusted server\'s. Empty for the site default.'))
       ->setSetting('max_length', 64)
       ->setSetting('is_ascii', TRUE);
 

@@ -243,11 +243,14 @@ final class StorageAuthorizationTest extends LwsStorageKernelTestBase {
    * Tests a storage with no authorization server to send clients to.
    */
   public function testNoAuthorizationServer(): void {
+    // Deleting the default server makes this site's own the default.
     $server = $this->container->get('entity_type.manager')->getStorage('lws_trusted_as')->load('test');
     $this->assertNotNull($server);
     $server->delete();
-    $this->assertSame('', $this->config('lws_authz.settings')->get('authorization_server'));
+    $this->assertChallenge($this->get('/lws/alice/root/'), NULL, self::STORAGE, self::BASE);
+    $this->assertChallenge($this->get('/lws/alice/root/', $this->token(self::ALICE)), 'invalid_token', self::STORAGE, self::BASE);
 
+    $this->config('lws_authz.settings')->set('authorization_server', 'gone')->save();
     $this->assertProblem($this->get('/lws/alice/root/'), 503, self::STORAGE . 'root/');
     $this->assertProblem($this->get('/lws/alice/root/', $this->token(self::ALICE)), 503, self::STORAGE . 'root/');
     // The description needs no token.

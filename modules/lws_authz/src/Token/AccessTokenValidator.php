@@ -7,7 +7,7 @@ namespace Drupal\lws_authz\Token;
 use Drupal\Component\Datetime\TimeInterface;
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\lws\Agent\RequestingAgent;
-use Drupal\lws_authz\Entity\TrustedAuthorizationServerInterface;
+use Drupal\lws_authz\AuthorizationServerInterface;
 use Ebremer\Lws\Auth\Jwt;
 use Psr\Log\LoggerInterface;
 
@@ -50,7 +50,7 @@ final class AccessTokenValidator {
    *
    * @param string $token
    *   The token, as presented.
-   * @param \Drupal\lws_authz\Entity\TrustedAuthorizationServerInterface $server
+   * @param \Drupal\lws_authz\AuthorizationServerInterface $server
    *   The authorization server the storage trusts.
    * @param string $audience
    *   The storage URI.
@@ -61,7 +61,7 @@ final class AccessTokenValidator {
    * @throws \Drupal\lws_authz\Token\InvalidTokenException
    *   When the token must be rejected.
    */
-  public function validate(string $token, TrustedAuthorizationServerInterface $server, string $audience): RequestingAgent {
+  public function validate(string $token, AuthorizationServerInterface $server, string $audience): RequestingAgent {
     if (substr_count($token, '.') !== 2) {
       throw new InvalidTokenException('The access token is not a signed JWT.');
     }
@@ -129,7 +129,7 @@ final class AccessTokenValidator {
    *
    * @throws \Drupal\lws_authz\Token\InvalidTokenException
    */
-  private function verifySignature(string $token, string $algorithm, ?string $kid, TrustedAuthorizationServerInterface $server): void {
+  private function verifySignature(string $token, string $algorithm, ?string $kid, AuthorizationServerInterface $server): void {
     try {
       $keys = $this->keys->keySet($server);
       // A key ID the server's cached keys lack may be a rotated-in key.

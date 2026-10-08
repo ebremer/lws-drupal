@@ -1,0 +1,39 @@
+# This site's authorization server (DESIGN.md §6.2, §6.3). Its metadata sits
+# at the site root, as LWS Core §5.2.2 requires; its endpoints live under the
+# LWS prefix, at the reserved segment "oauth", which AuthorizationServerRoutes
+# builds. None of them uses the current user: clients are public, and the
+# responses say how they may be cached, so page caching stays out.
+
+lws_authz.metadata:
+  path: '/.well-known/lws-configuration'
+  defaults:
+    _controller: '\Drupal\lws_authz\Controller\AuthorizationServerController::metadata'
+  methods: [GET, HEAD]
+  requirements:
+    # Public: clients read it before they hold any token.
+    _access: 'TRUE'
+  options:
+    no_cache: TRUE
+
+# The same document, for generic OAuth 2.0 clients (RFC 8414 §3).
+lws_authz.oauth_metadata:
+  path: '/.well-known/oauth-authorization-server'
+  defaults:
+    _controller: '\Drupal\lws_authz\Controller\AuthorizationServerController::metadata'
+  methods: [GET, HEAD]
+  requirements:
+    # Public: clients read it before they hold any token.
+    _access: 'TRUE'
+  options:
+    no_cache: TRUE
+
+lws_authz.settings:
+  path: '/admin/config/services/lws/authorization-servers/settings'
+  defaults:
+    _form: '\Drupal\lws_authz\Form\AuthorizationSettingsForm'
+    _title: 'Authorization settings'
+  requirements:
+    _permission: 'administer lws'
+
+route_callbacks:
+  - '\Drupal\lws_authz\Routing\AuthorizationServerRoutes::routes'

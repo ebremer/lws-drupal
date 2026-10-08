@@ -1,0 +1,10 @@
+entity.lws_trusted_as.collection:
+  title: 'Servers'
+  route_name: entity.lws_trusted_as.collection
+  base_route: entity.lws_trusted_as.collection
+
+lws_authz.settings:
+  title: 'Settings'
+  route_name: lws_authz.settings
+  base_route: entity.lws_trusted_as.collection
+  weight: 10

@@ -45,7 +45,7 @@ final class LwsStorageCommands extends DrushCommands {
   #[CLI\Option(name: 'label', description: 'A human-readable name; defaults to the slug.')]
   #[CLI\Option(name: 'controller', description: 'The URI of an agent with full control of the storage. Repeat for several.')]
   #[CLI\Option(name: 'owner', description: 'The ID of the Drupal user who administers the storage.')]
-  #[CLI\Option(name: 'authorization-server', description: 'The ID of the trusted authorization server whose tokens it accepts; defaults to the site default (see lws:as:list).')]
+  #[CLI\Option(name: 'authorization-server', description: 'The ID of the authorization server whose tokens it accepts: "local" for this site\'s own, or a trusted server\'s; defaults to the site default (see lws:as:list).')]
   #[CLI\Option(name: 'quota', description: 'The most content the storage may hold, in bytes. No limit by default.')]
   #[CLI\Option(name: 'page-size', description: 'The members on one page of a container listing. The site default (lws_storage.settings:page_size) by default.')]
   #[CLI\Usage(name: 'drush lws:storage:create alice --controller=https://id.example/alice', description: 'Creates the storage /lws/alice/ controlled by that agent.')]

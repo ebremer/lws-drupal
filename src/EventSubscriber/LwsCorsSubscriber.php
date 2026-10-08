@@ -12,6 +12,10 @@ use Symfony\Component\HttpKernel\KernelEvents;
 /**
  * Adds CORS headers to every response in the LWS URL space.
  *
+ * That is every URL under the prefix, those of storages and those of the
+ * authorization server's endpoints alike, and the authorization server's
+ * metadata.
+ *
  * LWS clients run in browsers on other origins, and authenticate with bearer
  * tokens, never cookies, so any origin may read responses: the token, not the
  * origin, decides what a request may do. Without credentialed requests, the
@@ -60,6 +64,11 @@ final class LwsCorsSubscriber implements EventSubscriberInterface {
    */
   public const MAX_AGE = 600;
 
+  /**
+   * The paths of authorization server metadata (LWS Core §5.2.2, RFC 8414).
+   */
+  public const METADATA_PATHS = ['/.well-known/lws-configuration', '/.well-known/oauth-authorization-server'];
+
   public function __construct(
     private readonly LwsUrlParser $parser,
   ) {}
@@ -76,7 +85,9 @@ final class LwsCorsSubscriber implements EventSubscriberInterface {
    */
   public function onResponse(ResponseEvent $event): void {
     $request = $event->getRequest();
-    if (!$event->isMainRequest() || $this->parser->parse($request->getPathInfo()) === NULL) {
+    $path = $request->getPathInfo();
+    $prefix = $this->parser->prefix();
+    if (!$event->isMainRequest() || !(($prefix !== '' && str_starts_with($path, $prefix . '/')) || in_array($path, self::METADATA_PATHS, TRUE))) {
       return;
     }
     $headers = $event->getResponse()->headers;
@@ -86,7 +97,8 @@ final class LwsCorsSubscriber implements EventSubscriberInterface {
       $headers->set('Access-Control-Expose-Headers', implode(', ', self::EXPOSE_HEADERS));
       return;
     }
-    // LwsRequestSubscriber answered the preflight with the target's methods.
+    // LwsRequestSubscriber, or core for other routes, answered the preflight
+    // with the methods the URL allows.
     if ($headers->has('Allow')) {
       $headers->set('Access-Control-Allow-Methods', (string) $headers->get('Allow'));
       $headers->set('Access-Control-Allow-Headers', implode(', ', self::ALLOW_HEADERS));

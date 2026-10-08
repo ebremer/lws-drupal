@@ -18,6 +18,7 @@ use Drupal\file\Validation\FileValidatorInterface;
 use Drupal\lws\Agent\RequestingAgent;
 use Drupal\lws\Http\LwsHttpException;
 use Drupal\lws\Routing\ResourceName;
+use Drupal\lws_authz\Server\LocalAuthorizationServer;
 use Drupal\lws_storage\Content\ContentStore;
 use Drupal\lws_storage\Content\StoredContent;
 use Drupal\lws_storage\Entity\LwsResourceInterface;
@@ -66,8 +67,8 @@ final class StorageManager {
    * @param int|null $ownerId
    *   The Drupal user who administers the storage.
    * @param string|null $authorizationServer
-   *   The trusted authorization server whose tokens it accepts, by ID; NULL
-   *   for the site's default.
+   *   The authorization server whose tokens it accepts, by ID: "local" for
+   *   this site's own, or a trusted server's; NULL for the site's default.
    * @param int|null $quotaBytes
    *   The most content it may hold, in bytes; NULL for no limit.
    * @param int|null $pageSize
@@ -77,7 +78,7 @@ final class StorageManager {
    *   When the storage would be invalid, for example a taken or malformed slug.
    */
   public function createStorage(string $slug, string $label, array $controllers = [], ?int $ownerId = NULL, ?string $authorizationServer = NULL, ?int $quotaBytes = NULL, ?int $pageSize = NULL): LwsStorageInterface {
-    if ($authorizationServer !== NULL && $this->entityTypeManager->getStorage('lws_trusted_as')->load($authorizationServer) === NULL) {
+    if ($authorizationServer !== NULL && $authorizationServer !== LocalAuthorizationServer::ID && $this->entityTypeManager->getStorage('lws_trusted_as')->load($authorizationServer) === NULL) {
       throw new \InvalidArgumentException(sprintf('There is no trusted authorization server %s.', $authorizationServer));
     }
     $storage = $this->entityTypeManager->getStorage('lws_storage')->create([

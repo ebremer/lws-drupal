@@ -1,2 +1,8 @@
-authorization_server: ''
+authorization_server: local
 clock_skew: 60
+token_lifetime: 300
+suites:
+  - ssi_cid
+rate_limits:
+  client: 100
+  subject: 30

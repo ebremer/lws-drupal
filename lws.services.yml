@@ -64,7 +64,7 @@ services:
 
   lws.config_subscriber:
     class: Drupal\lws\EventSubscriber\LwsConfigSubscriber
-    arguments: ['@cache_tags.invalidator']
+    arguments: ['@cache_tags.invalidator', '@router.builder']
     tags:
       - { name: event_subscriber }
 

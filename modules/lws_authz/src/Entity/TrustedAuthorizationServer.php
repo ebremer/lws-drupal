@@ -11,6 +11,7 @@ use Drupal\Core\Entity\EntityStorageInterface;
 use Drupal\Core\Entity\Routing\AdminHtmlRouteProvider;
 use Drupal\Core\StringTranslation\TranslatableMarkup;
 use Drupal\lws_authz\Form\TrustedAuthorizationServerForm;
+use Drupal\lws_authz\Server\LocalAuthorizationServer;
 use Drupal\lws_authz\TrustedAuthorizationServerListBuilder;
 
 /**
@@ -98,13 +99,13 @@ class TrustedAuthorizationServer extends ConfigEntityBase implements TrustedAuth
   /**
    * {@inheritdoc}
    *
-   * Storages that named a deleted server as their default trust none.
+   * When the default server is deleted, this site's own becomes the default.
    */
   public static function postDelete(EntityStorageInterface $storage, array $entities): void {
     parent::postDelete($storage, $entities);
     $settings = \Drupal::configFactory()->getEditable('lws_authz.settings');
     if (isset($entities[(string) $settings->get('authorization_server')])) {
-      $settings->set('authorization_server', '')->save();
+      $settings->set('authorization_server', LocalAuthorizationServer::ID)->save();
     }
   }
 

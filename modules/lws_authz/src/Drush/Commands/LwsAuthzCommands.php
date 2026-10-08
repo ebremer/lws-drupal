@@ -7,14 +7,17 @@ namespace Drupal\lws_authz\Drush\Commands;
 use Consolidation\OutputFormatters\StructuredData\RowsOfFields;
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
+use Drupal\lws_authz\AuthorizationServers;
 use Drupal\lws_authz\Entity\TrustedAuthorizationServerInterface;
+use Drupal\lws_authz\Server\LocalAuthorizationServer;
+use Drupal\lws_authz\Server\SigningKeys;
 use Drupal\lws_authz\Token\JsonWebKeySet;
 use Drush\Attributes as CLI;
 use Drush\Commands\AutowireTrait;
 use Drush\Commands\DrushCommands;
 
 /**
- * Drush commands for trusted authorization servers.
+ * Drush commands for authorization servers and this site's signing keys.
  *
  * No command method may be named create(): that is AutowireTrait's factory.
  */
@@ -25,6 +28,9 @@ final class LwsAuthzCommands extends DrushCommands {
   public function __construct(
     private readonly EntityTypeManagerInterface $entityTypeManager,
     private readonly ConfigFactoryInterface $configFactory,
+    private readonly AuthorizationServers $servers,
+    private readonly LocalAuthorizationServer $local,
+    private readonly SigningKeys $keys,
   ) {
     parent::__construct();
   }
@@ -53,6 +59,9 @@ final class LwsAuthzCommands extends DrushCommands {
   ): void {
     if (preg_match('/^[a-z0-9_]+$/', $id) !== 1) {
       throw new \InvalidArgumentException(dt('The ID must be lower-case letters, digits and underscores.'));
+    }
+    if ($id === LocalAuthorizationServer::ID) {
+      throw new \InvalidArgumentException(dt('"local" names this site\'s own authorization server.'));
     }
     if (!in_array(parse_url($issuer, PHP_URL_SCHEME), ['https', 'http'], TRUE)) {
       throw new \InvalidArgumentException(dt('The issuer must be an HTTPS URL.'));
@@ -89,7 +98,7 @@ final class LwsAuthzCommands extends DrushCommands {
   }
 
   /**
-   * Lists the trusted authorization servers.
+   * Lists this site's authorization server and the trusted ones.
    *
    * @param array<string, mixed> $options
    *   The command options.
@@ -104,8 +113,16 @@ final class LwsAuthzCommands extends DrushCommands {
   ])]
   #[CLI\DefaultTableFields(fields: ['id', 'issuer', 'keys', 'default'])]
   public function listServers(array $options = ['format' => 'table']): RowsOfFields {
-    $default = $this->configFactory->get('lws_authz.settings')->get('authorization_server');
-    $rows = [];
+    $default = $this->servers->defaultId();
+    $rows = [
+      LocalAuthorizationServer::ID => [
+        'id' => LocalAuthorizationServer::ID,
+        'label' => (string) $this->local->label(),
+        'issuer' => $this->local->getIssuer(),
+        'keys' => $this->local->isAvailable() ? 'this site\'s' : 'none: no key directory',
+        'default' => $default === LocalAuthorizationServer::ID ? 'yes' : '',
+      ],
+    ];
     foreach ($this->entityTypeManager->getStorage('lws_trusted_as')->loadMultiple() as $server) {
       if ($server instanceof TrustedAuthorizationServerInterface) {
         $rows[(string) $server->id()] = [
@@ -132,6 +149,50 @@ final class LwsAuthzCommands extends DrushCommands {
     }
     $server->delete();
     $this->logger()?->success(dt('No longer trusting @id.', ['@id' => $id]));
+  }
+
+  /**
+   * Makes a new signing key for this site's authorization server.
+   *
+   * The new key signs from now on. The previous one stays published for as
+   * long as tokens it signed may be valid; keys past that are deleted. Run it
+   * as the web server's user: a key file is readable by its owner only.
+   */
+  #[CLI\Command(name: 'lws:key:rotate')]
+  #[CLI\Usage(name: 'drush lws:key:rotate', description: 'Makes a new ES256 key and makes it the active one.')]
+  public function rotateKey(): void {
+    $directory = $this->keys->directory()
+      ?? throw new \InvalidArgumentException(dt("No signing key directory is configured: set \$settings['lws_authz_key_directory'] or the private file path."));
+    $kid = $this->keys->rotate();
+    $this->logger()?->success(dt('Made the signing key @kid in @directory; it signs from now on.', [
+      '@kid' => $kid,
+      '@directory' => $directory,
+    ]));
+  }
+
+  /**
+   * Lists the signing keys of this site's authorization server.
+   *
+   * @param array<string, mixed> $options
+   *   The command options.
+   */
+  #[CLI\Command(name: 'lws:key:list')]
+  #[CLI\FieldLabels(labels: [
+    'kid' => 'Key ID',
+    'created' => 'Made',
+    'status' => 'Status',
+  ])]
+  #[CLI\DefaultTableFields(fields: ['kid', 'created', 'status'])]
+  public function listKeys(array $options = ['format' => 'table']): RowsOfFields {
+    $rows = [];
+    foreach ($this->keys->inventory() as $i => $key) {
+      $rows[$key['kid']] = [
+        'kid' => $key['kid'],
+        'created' => gmdate('Y-m-d H:i:s', $key['created']) . 'Z',
+        'status' => $i === 0 ? 'active' : ($key['published'] ? 'published' : 'retired'),
+      ];
+    }
+    return new RowsOfFields($rows);
   }
 
 }

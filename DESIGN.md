@@ -1362,6 +1362,71 @@ with no adapters.
   runs `quickstart.php` end to end with no shortcuts. The Touchstone areas
   `authorization_server`, `storage_authorization` and `auth/cid` pass.
 
+**Done.** Differences from the plan above:
+
+- **Built as planned:**
+  - the metadata at `/.well-known/lws-configuration`, and at `/.well-known/oauth-authorization-server`
+    for generic OAuth clients. It lists the token types and subject identifier types of the enabled
+    suites only;
+  - the key set at `{prefix}/oauth/jwks`, and the token endpoint at `{prefix}/oauth/token`, which
+    follows [§6.3](#63-token-exchange-523):
+    - errors are RFC 6749 §5.2 JSON with `no-store`;
+    - a `resource` that is not a storage of this site trusting this server is `invalid_target`,
+      as is an `audience` other than that storage;
+    - a `requested_token_type` other than an access token, an `actor_token`, a parameter given
+      twice and a body over 64 KiB are refused;
+  - the `LwsAuthenticationSuite` plugin type: an attribute with the token type and the subject
+    identifier types, and the enabled suites in `lws_authz.settings:suites`;
+  - the SSI-CID suite, with HTTPS, `did:key` and `did:web` subjects:
+    - the claims are checked before anything is fetched;
+    - methods are retrieved as CID 1.0 §3.3 says: embedded in `authentication` or referenced from
+      it, controlled by the subject, in its document, `JsonWebKey` or `Multikey` (and their 2020
+      predecessors), not revoked or expired;
+    - the `kid` selects a method by its ID, its JWK's `kid`, or its fragment;
+    - documents are cached for five minutes and failures for one; why a fetch failed is logged,
+      never told to the client;
+  - access tokens: ES256, `kid` the RFC 7638 thumbprint, `aud` the `resource` as given, and a
+    lifetime of 300 seconds that never outlives the credential;
+  - flood control per client address (100 requests a minute) and per subject (30 tokens a minute),
+    answered `429` with `Retry-After`;
+  - `drush lws:key:rotate`. A retired key stays published for the token lifetime plus the clock
+    skew, and the next rotation deletes it.
+- **Built differently:**
+  - keys are private JWK files, not PEM: `{unix time}-{kid}.jwk`, readable by their owner only and
+    written atomically. The newest is the active one, and the first is made when it is first
+    needed. The directory falls back to `lws_authz/keys` in the private file system. There is no
+    Key module integration;
+  - this site's server has the reserved ID `local` and is the default (an empty setting means it
+    too). Deleting the default trusted server, or unchecking its "default" box, makes `local` the
+    default again. Without a key directory `local` is unavailable, and its storages answer `503`
+    as A1's do for a missing server;
+  - the endpoints follow the configurable prefix: their routes are built, and a change of prefix
+    rebuilds the router. CORS now covers the whole prefix, the reserved segments included, and the
+    metadata.
+- **Left out:**
+  - tokens for remote storages. This server issues tokens only for this site's storages; a
+    "configured remote" storage would need a configuration entity no step plans yet;
+  - credentials without a `kid`, which the discontinued did:key suite allowed. `lws-server` still
+    accepts them;
+  - the OpenID Connect and SAML suites, which are A5.
+- **More was built:**
+  - a settings form, a tab beside the server list: the default server, the suites, the token
+    lifetime, the clock skew and the rate limits;
+  - `drush lws:key:list`, and `local` in `lws:as:list`;
+  - status report entries for this site's server: no key directory, an active key the web server
+    cannot read (made by `drush` as another user), and a site in a subdirectory, whose metadata URL
+    needs a rewrite.
+- **Exit criteria:**
+  - `quickstart.php` with `TokenExchangeAuthenticator` and `SelfSignedCredentials::didKey()` runs
+    end to end against the dev site through Apache, `PATCH` included. Its one change is that the
+    key is read from a file rather than generated: until A3 only controllers may write, so the
+    storage was created with that `did:key` as its controller;
+  - Touchstone: `core` has 86 passed and none failed. `authorization_server` passes 9/9 and
+    `storage_authorization` 17/17, with harness-issued tokens signed by Drupal's own key.
+    `auth/cid` passes 22/22, its HTTPS subjects served by the harness's fixture host, which the
+    outbound allow-list admits.
+- **Verified:** 323 tests; phpcs and phpstan (level 8) are clean.
+
 **A3. Policy decision point.**
 
 - **Scope:**

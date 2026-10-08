@@ -5,8 +5,48 @@ services:
 
   lws_authz.authorization_servers:
     class: Drupal\lws_authz\AuthorizationServers
-    arguments: ['@entity_type.manager', '@config.factory']
+    arguments: ['@entity_type.manager', '@config.factory', '@lws_authz.local_server']
   Drupal\lws_authz\AuthorizationServers: '@lws_authz.authorization_servers'
+
+  # This site's own authorization server (DESIGN.md §6.2, §6.3).
+  lws_authz.local_server:
+    class: Drupal\lws_authz\Server\LocalAuthorizationServer
+    arguments: ['@lws.url_generator', '@lws.url_parser', '@lws_authz.signing_keys', '@plugin.manager.lws_authentication_suite']
+  Drupal\lws_authz\Server\LocalAuthorizationServer: '@lws_authz.local_server'
+
+  lws_authz.signing_keys:
+    class: Drupal\lws_authz\Server\SigningKeys
+    arguments: ['@settings', '@lock', '@datetime.time', '@config.factory', '@logger.channel.lws_authz']
+  Drupal\lws_authz\Server\SigningKeys: '@lws_authz.signing_keys'
+
+  lws_authz.token_exchange:
+    class: Drupal\lws_authz\Server\TokenExchange
+    arguments:
+      - '@lws_authz.local_server'
+      - '@lws_authz.authorization_servers'
+      - '@plugin.manager.lws_authentication_suite'
+      - '@lws_authz.signing_keys'
+      - '@lws.url_generator'
+      - '@lws.url_parser'
+      - '@flood'
+      - '@uuid'
+      - '@datetime.time'
+      - '@config.factory'
+      - '@logger.channel.lws_authz'
+      # Provided by lws_storage; without it there are no storages to issue for.
+      - '@?Drupal\lws\Storage\StorageRegistryInterface'
+  Drupal\lws_authz\Server\TokenExchange: '@lws_authz.token_exchange'
+
+  plugin.manager.lws_authentication_suite:
+    class: Drupal\lws_authz\AuthenticationSuite\AuthenticationSuiteManager
+    parent: default_plugin_manager
+    arguments: ['@config.factory']
+  Drupal\lws_authz\AuthenticationSuite\AuthenticationSuiteManager: '@plugin.manager.lws_authentication_suite'
+
+  lws_authz.cid_resolver:
+    class: Drupal\lws_authz\Cid\DocumentResolver
+    arguments: ['@lws.outbound_http', '@cache.lws', '@datetime.time', '@logger.channel.lws_authz']
+  Drupal\lws_authz\Cid\DocumentResolver: '@lws_authz.cid_resolver'
 
   lws_authz.keys:
     class: Drupal\lws_authz\Token\AuthorizationServerKeys
