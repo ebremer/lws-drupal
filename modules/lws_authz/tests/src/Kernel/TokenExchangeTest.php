@@ -202,7 +202,7 @@ final class TokenExchangeTest extends LwsStorageKernelTestBase {
         'response_types_supported' => ['token'],
         'token_endpoint_auth_methods_supported' => ['none'],
         'claims_supported' => ['sub', 'iss', 'client_id', 'aud', 'exp', 'iat', 'jti'],
-        'subject_token_types_supported' => [self::JWT],
+        'subject_token_types_supported' => [self::JWT, 'urn:ietf:params:oauth:token-type:id_token'],
         'subject_identifier_types_supported' => ['https', 'did:key', 'did:web'],
       ], $this->json($response));
     }

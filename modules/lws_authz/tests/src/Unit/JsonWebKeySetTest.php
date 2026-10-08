@@ -28,7 +28,8 @@ final class JsonWebKeySetTest extends UnitTestCase {
         // A private key: only its public members are kept.
         $p256->jwk() + ['kid' => 'a'],
         $ed25519->publicKey->jwk() + ['kid' => 'b', 'use' => 'sig', 'alg' => 'EdDSA'],
-        // Skipped: RSA, an encryption key, an "alg" its type cannot have, junk.
+        // Skipped: an RSA key too small, an encryption key, an "alg" its type
+        // cannot have, junk.
         ['kty' => 'RSA', 'kid' => 'rsa', 'n' => 'AQAB', 'e' => 'AQAB'],
         $p256->publicKey->jwk() + ['kid' => 'enc', 'use' => 'enc'],
         $p256->publicKey->jwk() + ['kid' => 'wrong-alg', 'alg' => 'ES384'],
@@ -64,6 +65,39 @@ final class JsonWebKeySetTest extends UnitTestCase {
     $this->assertCount(2, $keys->candidates(NULL, 'ES256'));
     $this->assertSame([], $keys->candidates(NULL, 'EdDSA'));
     $this->assertSame([], $keys->candidates('other', 'ES256'));
+  }
+
+  /**
+   * Tests RSA keys, which may name one algorithm or be for any RSA one.
+   */
+  public function testRsa(): void {
+    $key = openssl_pkey_new(['private_key_type' => OPENSSL_KEYTYPE_RSA, 'private_key_bits' => 2048]);
+    $this->assertNotFalse($key);
+    $details = openssl_pkey_get_details($key);
+    $this->assertIsArray($details);
+    $b64 = static fn (string $bytes): string => rtrim(strtr(base64_encode($bytes), '+/', '-_'), '=');
+    $public = ['kty' => 'RSA', 'n' => $b64($details['rsa']['n']), 'e' => $b64($details['rsa']['e'])];
+    $keys = JsonWebKeySet::parse([
+      'keys' => [
+        $public + ['kid' => 'any'],
+        $public + ['kid' => 'rs256', 'alg' => 'RS256', 'use' => 'sig'],
+        // Skipped: Keycloak's encryption key, by its use and by its "alg".
+        $public + ['kid' => 'enc', 'use' => 'enc', 'alg' => 'RSA-OAEP'],
+        $public + ['kid' => 'oaep', 'alg' => 'RSA-OAEP'],
+      ],
+    ]);
+    $this->assertSame(2, $keys->count());
+    $this->assertCount(1, $keys->candidates('any', 'PS512'));
+    $this->assertCount(2, $keys->candidates(NULL, 'RS256'));
+    $this->assertSame([], $keys->candidates('rs256', 'PS256'));
+    $this->assertSame([], $keys->candidates(NULL, 'ES256'));
+    // What toArray() returns keeps each key's algorithms.
+    $array = $keys->toArray();
+    $this->assertArrayNotHasKey('alg', $array['keys'][0]);
+    $this->assertSame('RS256', $array['keys'][1]['alg']);
+    $again = JsonWebKeySet::parse($array);
+    $this->assertCount(1, $again->candidates('any', 'PS256'));
+    $this->assertSame([], $again->candidates('rs256', 'PS256'));
   }
 
   /**

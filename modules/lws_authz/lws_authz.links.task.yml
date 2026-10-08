@@ -8,3 +8,9 @@ lws_authz.settings:
   route_name: lws_authz.settings
   base_route: entity.lws_trusted_as.collection
   weight: 10
+
+entity.lws_trusted_issuer.collection:
+  title: 'OpenID Providers'
+  route_name: entity.lws_trusted_issuer.collection
+  base_route: entity.lws_trusted_as.collection
+  weight: 5

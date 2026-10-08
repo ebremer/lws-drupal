@@ -9,6 +9,7 @@ use Drupal\Core\Config\TypedConfigManagerInterface;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\Form\ConfigFormBase;
 use Drupal\Core\Form\FormStateInterface;
+use Drupal\Core\Url;
 use Drupal\lws_authz\AuthenticationSuite\AuthenticationSuiteManager;
 use Drupal\lws_authz\Server\LocalAuthorizationServer;
 use Symfony\Component\DependencyInjection\ContainerInterface;
@@ -112,6 +113,32 @@ final class AuthorizationSettingsForm extends ConfigFormBase {
       '#options' => $options,
       '#default_value' => (array) $settings->get('suites'),
     ];
+    $form['local']['openid'] = [
+      '#type' => 'details',
+      '#title' => $this->t('OpenID Connect'),
+      '#open' => TRUE,
+      '#description' => $this->t('ID Tokens are accepted from the <a href=":url">OpenID Providers configured</a> here, as each is configured, and from others as below.', [
+        ':url' => Url::fromRoute('entity.lws_trusted_issuer.collection')->toString(),
+      ]),
+      '#states' => [
+        'visible' => [':input[name="suites[openid]"]' => ['checked' => TRUE]],
+      ],
+    ];
+    $form['local']['openid']['openid_discovery'] = [
+      '#type' => 'checkbox',
+      '#title' => $this->t("Trust the provider a subject's document names"),
+      '#description' => $this->t("Accept an ID Token from a provider that is not configured when its subject's controlled identifier document names the provider as its OpenID Provider (lws10-authn-openid §5). Without it, only configured providers are trusted."),
+      '#default_value' => (bool) $settings->get('openid.discovery'),
+    ];
+    $form['local']['openid']['openid_require_as_audience'] = [
+      '#type' => 'checkbox',
+      '#title' => $this->t('Require such ID Tokens to name this authorization server in "aud"'),
+      '#description' => $this->t('Without it, an ID Token issued to any client of such a provider can be exchanged here by that client.'),
+      '#default_value' => (bool) $settings->get('openid.require_as_audience'),
+      '#states' => [
+        'visible' => [':input[name="openid_discovery"]' => ['checked' => TRUE]],
+      ],
+    ];
     $form['local']['token_lifetime'] = [
       '#type' => 'number',
       '#title' => $this->t('Access token lifetime'),
@@ -164,6 +191,8 @@ final class AuthorizationSettingsForm extends ConfigFormBase {
       ->set('rate_limits.client', (int) $form_state->getValue('rate_limit_client'))
       ->set('rate_limits.subject', (int) $form_state->getValue('rate_limit_subject'))
       ->set('rate_limits.access_requests', (int) $form_state->getValue('rate_limit_access_requests'))
+      ->set('openid.discovery', (bool) $form_state->getValue('openid_discovery'))
+      ->set('openid.require_as_audience', (bool) $form_state->getValue('openid_require_as_audience'))
       ->save();
     parent::submitForm($form, $form_state);
   }

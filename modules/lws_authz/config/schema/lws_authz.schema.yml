@@ -30,6 +30,16 @@ lws_authz.settings:
         access_requests:
           type: integer
           label: 'Access requests one agent may submit per hour.'
+    openid:
+      type: mapping
+      label: 'OpenID Connect authentication suite'
+      mapping:
+        discovery:
+          type: boolean
+          label: 'Whether an ID Token from a provider that is not configured is accepted when its subject''s controlled identifier document names the provider (lws10-authn-openid §5).'
+        require_as_audience:
+          type: boolean
+          label: 'Whether such an ID Token must name this authorization server in "aud".'
 
 lws_authz.trusted_as.*:
   type: config_entity
@@ -47,3 +57,26 @@ lws_authz.trusted_as.*:
     jwks:
       type: string
       label: 'Pinned JSON Web Key Set. Empty to fetch the keys from the jwks_uri of its metadata.'
+
+lws_authz.trusted_issuer.*:
+  type: config_entity
+  label: 'Trusted OpenID Provider'
+  mapping:
+    id:
+      type: machine_name
+      label: 'ID'
+    label:
+      type: required_label
+      label: 'Label'
+    issuer:
+      type: uri
+      label: 'Issuer identifier: the "iss" of its ID Tokens.'
+    jwks:
+      type: string
+      label: 'Pinned JSON Web Key Set. Empty to discover the keys.'
+    require_as_audience:
+      type: boolean
+      label: 'Whether its ID Tokens must name this authorization server in "aud".'
+    verify_subject:
+      type: boolean
+      label: 'Whether each subject''s controlled identifier document must name it as an OpenID Provider.'

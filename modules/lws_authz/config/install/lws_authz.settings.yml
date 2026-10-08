@@ -3,7 +3,11 @@ clock_skew: 60
 token_lifetime: 300
 suites:
   - ssi_cid
+  - openid
 rate_limits:
   client: 100
   subject: 30
   access_requests: 30
+openid:
+  discovery: true
+  require_as_audience: true

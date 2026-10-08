@@ -736,7 +736,7 @@ final class SsiCidSuite extends AuthenticationSuiteBase {
 |---|---|---|
 | **SSI-CID** (first) | `…:token-type:jwt` | `alg` must not be `none`. `sub` = `iss` = `client_id`. `aud` includes this AS. `exp` and `iat` required. `kid` selects a verification method of the subject's controlled identifier document, through its `authentication` relationship (CID 1.0 §3.3); it must be controlled by the subject, and be `JsonWebKey` or `Multikey`. Signature per RFC 7515 §5.2. Subjects: `https:` (dereferenced; `id` must equal `sub`), `did:key` (resolved locally) and `did:web` (over HTTPS) |
 | **OpenID Connect** | `…:token-type:id_token` | `alg` must not be `none`. Identifiers: `sub` → subject, `iss` → issuer, `azp` → client. Trust is pre-configured per issuer (`lws_trusted_issuer`) **or** discovered: dereference `sub` as a CID document, require a `service` with `type` `https://www.w3.org/ns/lws#OpenIdProvider` and `serviceEndpoint` equal to `iss`, then run OIDC discovery to get `jwks_uri`. Then OIDC Core §3.1.3.7 validation |
-| **SAML 2.0** (later step) | `…:token-type:saml2` | Trust is out-of-band only (`lws_trusted_issuer` with IdP certificates). Exactly one assertion, with one enveloped signature over it (defends against signature wrapping). `NameID` → subject, `Issuer` → issuer, `SubjectConfirmationData/@Recipient` → client, `Audience` must include this AS. `NotBefore`/`NotOnOrAfter` checked |
+| **SAML 2.0** (later, a module of its own) | `…:token-type:saml2` | Trust is out-of-band only (`lws_trusted_issuer` with IdP certificates). Exactly one assertion, with one enveloped signature over it (defends against signature wrapping). `NameID` → subject, `Issuer` → issuer, `SubjectConfirmationData/@Recipient` → client, `Audience` must include this AS. `NotBefore`/`NotOnOrAfter` checked |
 
 **Outbound fetches** (CID documents, OIDC discovery, JWKS) go through `lws.outbound_http`. It is
 Drupal's Guzzle client with an SSRF guard:
@@ -752,8 +752,9 @@ Callers cache what they fetch: discovered keys for an hour, failures for a minut
 
 **Config entities:**
 
-- `lws_trusted_issuer`: an identity issuer, either OIDC (issuer URL, optional pinned JWKS,
-  `require_as_audience`) or SAML (entity id and certificates);
+- `lws_trusted_issuer`: an OpenID Provider (issuer URL, optional pinned JWKS,
+  `require_as_audience`, `verify_subject`). The SAML module will bring its own, for entity IDs
+  and certificates;
 - `lws_trusted_as`: an external authorization server for a storage (issuer, optional pinned JWKS).
 
 Being config, both deploy across environments.
@@ -1711,6 +1712,65 @@ with no adapters.
 - **Exit:** the Touchstone `auth/oidc` and `auth/saml` areas pass, and an end-to-end run with
   Keycloak `lws-authn` ID tokens succeeds.
 
+**Done, for OpenID Connect; SAML waits** (decided 2026-10-08: not now, and then as a module of
+its own, `lws_authz_saml`, so that sites without it never load `xmlseclibs`). Differences from
+the plan above:
+
+- **Built:**
+  - **RSA verification in `lws-client`.** RS256, RS384 and RS512 go through ext-openssl.
+    PS256, PS384 and PS512, which ext-openssl cannot verify, are the raw RSA operation followed
+    by EMSA-PSS-VERIFY (RFC 8017 §9.1.2) in PHP. Keys must have 2048 bits or more. A JWK's `alg`
+    pins a key to one algorithm, and without one an RSA key verifies any RSA algorithm
+    (`VerificationKey::supports()`). The vectors are RFC 7515 A.2 and RFC 7520 §4.2, plus
+    OpenSSL and Python signatures, including PSS with 2057- and 2052-bit moduli.
+  - **Algorithms.** Access tokens of trusted servers, SSI-CID credentials and ID Tokens accept
+    those algorithms too, beside ES256, ES384 and EdDSA. `JsonWebKeySet` skips encryption keys
+    (`use: enc`, `alg: RSA-OAEP`), as Keycloak publishes one beside its signing key.
+  - **The `openid` suite** (`OpenIdConnect`, `urn:ietf:params:oauth:token-type:id_token`,
+    subject identifier type `https`). It applies the checks in this order:
+    1. the header: no `none`, HMAC, `crit` or `typ: at+jwt`;
+    2. `sub` and `azp` are URIs, and `iss` is a URL;
+    3. the audience;
+    4. `exp`, `iat` and `nbf`;
+    5. the provider's keys and the signature;
+    6. only then, the subject's document.
+
+    Only an ID Token its issuer signed can therefore make the site fetch a subject URL.
+  - **Discovery.** A provider's keys come from `{iss}/.well-known/openid-configuration`, whose
+    `issuer` must be `iss` exactly. They are cached like an authorization server's: an hour, a
+    minute for failures, and a refresh at most once a minute for an unknown `kid`.
+    `AuthorizationServerKeys::openIdProviderKeys()` shares that logic.
+  - **Trusted OpenID Providers** (`lws_trusted_issuer`). Each has:
+    - pinned keys, or keys from discovery;
+    - `require_as_audience` (default on). Without it, `aud` must include `azp`, as OpenID
+      Connect Core §3.1.3.7 has it for the relying party, which suits providers such as Keycloak
+      whose ID Tokens name only their client and its audiences;
+    - `verify_subject` (default on). Without it, the provider is trusted for any subject: a
+      pre-existing trust relationship (§5), with no document fetched.
+
+    They come with a form and a list beside the authorization servers, and Drush commands
+    `lws:op:add`, `lws:op:list` and `lws:op:delete`.
+  - **Providers that are not configured** are trusted when the subject's controlled identifier
+    document names them: a `service` of type `lws:OpenIdProvider`, written as the full IRI, as
+    `OpenIdProvider` under the LWS context, or as a term or compact IRI the document's own
+    context defines, whose `serviceEndpoint` is `iss`. Two settings govern this:
+    - `lws_authz.settings:openid.discovery` turns it off;
+    - `openid.require_as_audience` sets the audience rule for them.
+  - **Setup.** The suite is on for new sites. Update hook `lws_authz_update_11003` adds its
+    settings but leaves it off on existing ones.
+- **Built differently:**
+  - **The provider for the end-to-end test** is the deployed ebremer.com Keycloak (realm
+    `Halcyon`, client `https://ebremer.com/id/lws-client`), used as is: nothing was configured on
+    it. It is not one in DDEV. Its ID Tokens name `https://ebremer.com/lws` and their client, not
+    this site, so the development site trusts it with `--any-audience`.
+- **Verified:**
+  - Touchstone `auth/oidc` 6/6, `auth/cid` 22/22, and `core` as after S5;
+  - from the development site, the realm's RS256 key is discovered through the outbound guard,
+    and `https://ebremer.com/id/erich` names the realm;
+  - 517 tests; phpcs and phpstan (level 8) are clean;
+  - `lws-client`: 193 tests; phpstan clean.
+- **Left out:** SAML (above); Q6 and Q7 are unchanged.
+
 **A6 (optional).** DPoP-bound tokens, and the `lws_identity` module (I1).
 
 **U1 (optional add-on). `lws_agent_users`.**
@@ -1842,8 +1902,8 @@ makes. Where `lws-server` (the Java implementation) chose differently, that is n
    with OpenID through `simple_oauth`) would make the site a complete stack. Is that in scope, or
    is the Keycloak `lws-authn` the IdP?
 4. **Q4. Coupling to `ebremer/lws-client`.** *Decided 2026-10-08: reuse it.* `JsonPatch::apply()`
-   was added with S4. The client still needs RSA verification (by A5), a `WebhookSigner` (by S6),
-   and a tagged release on Packagist (before a drupal.org release).
+   was added with S4, and RSA verification with A5. The client still needs a `WebhookSigner` (by
+   S6), and a tagged release on Packagist (before a drupal.org release).
 5. **Q5. Separate storage hostname.** Should it be a hard requirement, or a recommendation with a
    status-report warning (as designed)?
 6. **Q6. DPoP.** `lws-server` supports DPoP-bound tokens. Is DPoP wanted for 1.0, or later (A6)?

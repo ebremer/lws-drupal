@@ -15,14 +15,17 @@ use Ebremer\Lws\Exception\ProtocolException;
 use Psr\Log\LoggerInterface;
 
 /**
- * The signing keys of authorization servers.
+ * The signing keys of authorization servers and OpenID Providers.
  *
  * Pinned keys come from the server's configuration, and this site's own
  * server gives its keys the same way. Otherwise the keys are
  * discovered as LWS Core §5.2.4.2 requires: the server's metadata at
  * /.well-known/lws-configuration (RFC 8414 §3.1, which puts the well-known
  * segment before any path of the issuer) must name the issuer itself, and its
- * "jwks_uri" gives the keys. Both are fetched through the outbound guard.
+ * "jwks_uri" gives the keys. An OpenID Provider's come from its OpenID
+ * Connect Discovery document instead, at /.well-known/openid-configuration
+ * after the issuer (OpenID Connect Discovery 1.0 §4), which must name the
+ * issuer exactly (§4.3). All are fetched through the outbound guard.
  *
  * Discovered keys are cached for an hour, and failures for a minute. A token
  * whose "kid" the cached keys lack may force one refresh per server a minute,
@@ -74,16 +77,66 @@ final class AuthorizationServerKeys {
   public function keySet(AuthorizationServerInterface $server, bool $refresh = FALSE): JsonWebKeySet {
     $pinned = $server->getJwks();
     if ($pinned !== NULL) {
-      try {
-        return JsonWebKeySet::parse($pinned);
-      }
-      catch (\InvalidArgumentException $e) {
-        throw new KeysUnavailableException(sprintf('The pinned keys of %s are invalid: %s', $server->id(), $e->getMessage()), 0, $e);
-      }
+      return self::pinned($pinned, (string) $server->id());
     }
-
     $issuer = $server->getIssuer();
-    $cid = 'jwks:' . hash('sha256', $issuer);
+    return $this->cached('jwks:' . hash('sha256', $issuer), 'authorization server', $issuer, fn (): JsonWebKeySet => $this->discover($issuer), $refresh);
+  }
+
+  /**
+   * The keys of an OpenID Provider.
+   *
+   * @param string $issuer
+   *   Its issuer identifier, as an ID Token's "iss" gives it.
+   * @param string|null $pinned
+   *   A pinned JSON Web Key Set, which is used instead of discovery.
+   * @param bool $refresh
+   *   Whether to fetch discovered keys again, because a token named a key the
+   *   cached ones lack. Rate-limited; ignored for pinned keys.
+   *
+   * @throws \Drupal\lws_authz\Token\KeysUnavailableException
+   *   When the keys cannot be obtained.
+   */
+  public function openIdProviderKeys(string $issuer, ?string $pinned = NULL, bool $refresh = FALSE): JsonWebKeySet {
+    if ($pinned !== NULL) {
+      return self::pinned($pinned, $issuer);
+    }
+    return $this->cached('jwks:openid:' . hash('sha256', $issuer), 'OpenID Provider', $issuer, fn (): JsonWebKeySet => $this->discoverOpenId($issuer), $refresh);
+  }
+
+  /**
+   * Keys from a pinned key set.
+   *
+   * @throws \Drupal\lws_authz\Token\KeysUnavailableException
+   *   When the set is invalid.
+   */
+  private static function pinned(string $jwks, string $owner): JsonWebKeySet {
+    try {
+      return JsonWebKeySet::parse($jwks);
+    }
+    catch (\InvalidArgumentException $e) {
+      throw new KeysUnavailableException(sprintf('The pinned keys of %s are invalid: %s', $owner, $e->getMessage()), 0, $e);
+    }
+  }
+
+  /**
+   * Discovered keys, from the cache unless they must be fetched.
+   *
+   * @param string $cid
+   *   The cache ID.
+   * @param string $kind
+   *   What the issuer is, for messages.
+   * @param string $issuer
+   *   The issuer.
+   * @param \Closure(): \Drupal\lws_authz\Token\JsonWebKeySet $discover
+   *   Fetches the keys.
+   * @param bool $refresh
+   *   Whether to fetch them again if the rate limit allows.
+   *
+   * @throws \Drupal\lws_authz\Token\KeysUnavailableException
+   *   When the keys cannot be obtained, now or a minute ago.
+   */
+  private function cached(string $cid, string $kind, string $issuer, \Closure $discover, bool $refresh): JsonWebKeySet {
     $cached = $this->cache->get($cid);
     if ($cached !== FALSE && is_array($cached->data)) {
       if (is_string($cached->data['error'] ?? NULL)) {
@@ -93,12 +146,11 @@ final class AuthorizationServerKeys {
         return JsonWebKeySet::parse($cached->data);
       }
     }
-
     try {
-      $keys = $this->discover($issuer);
+      $keys = $discover();
     }
     catch (OutboundHttpException | ProtocolException | \InvalidArgumentException $e) {
-      $message = sprintf('The keys of the authorization server %s are unavailable: %s', $issuer, $e->getMessage());
+      $message = sprintf('The keys of the %s %s are unavailable: %s', $kind, $issuer, $e->getMessage());
       $this->logger->warning($message);
       $this->cache->set($cid, ['error' => $message], $this->time->getRequestTime() + self::FAILURE_TTL);
       throw new KeysUnavailableException($message, 0, $e);
@@ -123,9 +175,40 @@ final class AuthorizationServerKeys {
     if ($metadata->jwksUri === NULL) {
       throw new ProtocolException(sprintf('the metadata at %s has no jwks_uri', $url));
     }
-    $keys = JsonWebKeySet::parse($this->http->get($metadata->jwksUri, 'application/jwk-set+json, application/json')->json());
+    return $this->fetchKeys($metadata->jwksUri);
+  }
+
+  /**
+   * Fetches an OpenID Provider's keys through its discovery document.
+   *
+   * @throws \Drupal\lws\Outbound\OutboundHttpException
+   * @throws \Ebremer\Lws\Exception\ProtocolException
+   * @throws \InvalidArgumentException
+   */
+  private function discoverOpenId(string $issuer): JsonWebKeySet {
+    $url = rtrim($issuer, '/') . '/.well-known/openid-configuration';
+    $metadata = $this->http->get($url)->json();
+    if (($metadata['issuer'] ?? NULL) !== $issuer) {
+      throw new ProtocolException(sprintf('the discovery document at %s is not for the issuer %s (OpenID Connect Discovery 1.0 §4.3)', $url, $issuer));
+    }
+    $jwksUri = $metadata['jwks_uri'] ?? NULL;
+    if (!is_string($jwksUri) || $jwksUri === '') {
+      throw new ProtocolException(sprintf('the discovery document at %s has no jwks_uri', $url));
+    }
+    return $this->fetchKeys($jwksUri);
+  }
+
+  /**
+   * Fetches a key set.
+   *
+   * @throws \Drupal\lws\Outbound\OutboundHttpException
+   * @throws \Ebremer\Lws\Exception\ProtocolException
+   * @throws \InvalidArgumentException
+   */
+  private function fetchKeys(string $jwksUri): JsonWebKeySet {
+    $keys = JsonWebKeySet::parse($this->http->get($jwksUri, 'application/jwk-set+json, application/json')->json());
     if ($keys->count() === 0) {
-      throw new ProtocolException(sprintf('%s has no ES256, ES384 or EdDSA signing keys', $metadata->jwksUri));
+      throw new ProtocolException(sprintf('%s has no signing keys of a kind this site verifies', $jwksUri));
     }
     return $keys;
   }

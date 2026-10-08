@@ -153,7 +153,7 @@ final class SelfSignedCid extends AuthenticationSuiteBase implements ContainerFa
     if ($inactive !== NULL) {
       throw new InvalidCredentialException(sprintf('The verification method %s cannot be used: %s.', $method->id, $inactive));
     }
-    if ($method->key->algorithm() !== $algorithm || !Jwt::verify($subjectToken, $method->key)) {
+    if (!$method->key->supports($algorithm) || !Jwt::verify($subjectToken, $method->key)) {
       throw new InvalidCredentialException('The credential\'s signature does not verify with the verification method its "kid" names.');
     }
     return new ValidatedCredential($subject, $subject, $subject, (int) floor($expires));

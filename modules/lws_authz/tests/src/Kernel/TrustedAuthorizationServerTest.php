@@ -113,7 +113,7 @@ final class TrustedAuthorizationServerTest extends KernelTestBase {
 
     $rsa = '{"keys":[{"kty":"RSA","n":"AQAB","e":"AQAB"}]}';
     $errors = $this->submit($bad + ['issuer' => 'https://as.example', 'jwks' => $rsa]);
-    $this->assertStringContainsString('no EC P-256', $errors['jwks']);
+    $this->assertStringContainsString('no signing keys of a kind this site verifies', $errors['jwks']);
     $this->assertNull($this->load('bad'));
 
     // "local" names this site's own server.

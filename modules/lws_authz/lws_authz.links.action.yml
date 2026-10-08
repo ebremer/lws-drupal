@@ -3,3 +3,9 @@ entity.lws_trusted_as.add_form:
   title: 'Add authorization server'
   appears_on:
     - entity.lws_trusted_as.collection
+
+entity.lws_trusted_issuer.add_form:
+  route_name: entity.lws_trusted_issuer.add_form
+  title: 'Add OpenID Provider'
+  appears_on:
+    - entity.lws_trusted_issuer.collection

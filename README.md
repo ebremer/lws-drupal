@@ -13,13 +13,14 @@ is in [DESIGN.md](DESIGN.md).
 
 ## Status
 
-**Step S5, hardening and the administration pages** (DESIGN.md §10), after S1,
-storages, A1, access tokens, S2, data resources, S3, pagination, S4, metadata
-and JSON Patch, A2, the authorization server, A3, access policies, and A4,
-access requests and grants. Storages are created at *Content › LWS storages*
-or with Drush; everything in them is managed over HTTP, with access tokens the
-site issues itself, by their controllers and by the agents their access
-policies allow:
+**Step A5, OpenID Connect** (DESIGN.md §10), after S1, storages, A1, access
+tokens, S2, data resources, S3, pagination, S4, metadata and JSON Patch, A2, the
+authorization server, A3, access policies, A4, access requests and grants, and
+S5, hardening and the administration pages. Storages are created at *Content ›
+LWS storages* or with Drush; everything in them is managed over HTTP, with
+access tokens the site issues itself, for self-signed credentials or OpenID
+Connect ID Tokens, by their controllers and by the agents their access policies
+allow:
 
 | Request | Response |
 |---|---|
@@ -38,7 +39,7 @@ policies allow:
 | `GET` either service, or an entry | The requests and grants the agent may see: all of them for a controller, else its own and the grants that name it |
 | `DELETE` an entry | Cancels a request (its agent or a controller), or revokes a grant (a controller), at once |
 | `GET /.well-known/lws-configuration` | The authorization server's metadata (RFC 8414) |
-| `POST /lws/oauth/token` | Token exchange (RFC 8693): a self-signed credential for an access token to a storage |
+| `POST /lws/oauth/token` | Token exchange (RFC 8693): a self-signed credential or an OpenID Connect ID Token for an access token to a storage |
 | `GET /lws/oauth/jwks` | The keys that sign access tokens |
 | No token, or a rejected one | `401` with a Bearer challenge: `as_uri` (the authorization server), `realm` (the storage) and, for a rejected token, `error` |
 | A valid token, but no policy allows it | `403`, or `404` with `lws.settings:conceal_existence` |
@@ -128,7 +129,7 @@ drush lws:policy:delete alice 3
 ## Access tokens
 
 A storage accepts RFC 9068 access tokens (`typ: at+jwt`, signed with ES256,
-ES384 or EdDSA) from one authorization server: its own, set with
+ES384, EdDSA, RS256, RS384, RS512, PS256, PS384 or PS512) from one authorization server: its own, set with
 `lws:storage:create --authorization-server=<id>`, or the site's default. A token
 must name that server as `iss` and the storage URI, alone, as `aud` (LWS Core
 §5.2.4).
@@ -141,8 +142,35 @@ the credential lives. It takes self-signed controlled identifier credentials
 ([lws10-authn-ssi-cid](https://w3c.github.io/lws-protocol/lws10-authn-ssi-cid/)):
 a JWT the agent signs itself, whose `kid` names a key of its controlled
 identifier document. The subject may be an HTTPS URI, whose document is fetched,
-a `did:key`, or a `did:web`. Requests are rate-limited per client address and
-per agent.
+a `did:key`, or a `did:web`. It also takes ID Tokens of OpenID Providers
+([lws10-authn-openid](https://w3c.github.io/lws-protocol/lws10-authn-openid/)),
+whose `sub`, `iss` and `azp` become the subject, issuer and client. Requests are
+rate-limited per client address and per agent.
+
+An ID Token is accepted from a provider in either of two ways:
+
+- **The subject names it.** The subject's controlled identifier document has a
+  service of type `https://www.w3.org/ns/lws#OpenIdProvider` whose
+  `serviceEndpoint` is the token's `iss`. The provider's keys come from its
+  OpenID Connect Discovery document, and the ID Token's `aud` must include this
+  site's authorization server. Both can be turned off in the settings.
+- **It is configured.** Configured providers are listed at *OpenID Providers*,
+  beside the authorization servers, or managed with `lws:op:add`, `lws:op:list`
+  and `lws:op:delete`. Each can:
+  - pin its keys;
+  - accept ID Tokens that name only their client in `aud` (`--any-audience`),
+    as Keycloak's do;
+  - be trusted for any subject, without fetching the subject's document
+    (`--any-subject`).
+
+```sh
+drush lws:op:add halcyon https://ebremer.com/auth/realms/Halcyon --any-audience
+```
+
+The keys of the providers are verified as ES256, ES384, EdDSA or, for providers
+such as Keycloak that sign with RSA, RS256 to RS512 and PS256 to PS512, with
+keys of 2048 bits or more. SAML 2.0 assertions are not taken yet: that suite
+will be a module of its own.
 
 It signs with ES256 keys kept as JSON Web Key files, readable by their owner
 only, in `$settings['lws_authz_key_directory']`, or `lws_authz/keys` in the

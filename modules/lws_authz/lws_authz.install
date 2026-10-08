@@ -32,3 +32,18 @@ function lws_authz_update_11002(): string {
   \Drupal::configFactory()->getEditable('lws_authz.settings')->set('rate_limits.access_requests', 30)->save();
   return 'Installed access requests and grants.';
 }
+
+/**
+ * Adds the settings of the OpenID Connect suite (step A5).
+ *
+ * The suite stays off on existing sites until it is enabled in the
+ * authorization settings.
+ */
+function lws_authz_update_11003(): string {
+  $settings = \Drupal::configFactory()->getEditable('lws_authz.settings');
+  if ($settings->get('openid') !== NULL) {
+    return 'The OpenID Connect suite was already configured.';
+  }
+  $settings->set('openid', ['discovery' => TRUE, 'require_as_audience' => TRUE])->save();
+  return 'Added the settings of the OpenID Connect suite. Enable it in the authorization settings to accept ID Tokens.';
+}

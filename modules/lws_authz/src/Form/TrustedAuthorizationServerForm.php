@@ -106,7 +106,7 @@ final class TrustedAuthorizationServerForm extends EntityForm {
       return;
     }
     if ($keys->count() === 0) {
-      $form_state->setErrorByName('jwks', $this->t('The key set has no EC P-256, P-384 or Ed25519 signing keys.'));
+      $form_state->setErrorByName('jwks', $this->t('The key set has no signing keys of a kind this site verifies: EC P-256 or P-384, Ed25519, or RSA of 2048 bits or more.'));
       return;
     }
     $form_state->setValue('jwks', json_encode($keys->toArray(), JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));

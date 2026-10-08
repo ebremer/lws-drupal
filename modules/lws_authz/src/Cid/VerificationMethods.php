@@ -163,7 +163,7 @@ final class VerificationMethods {
           return NULL;
         }
         $key = VerificationKey::fromJwk($jwk);
-        if (isset($jwk['alg']) && $jwk['alg'] !== $key->algorithm()) {
+        if (isset($jwk['alg']) && (!is_string($jwk['alg']) || !$key->supports($jwk['alg']))) {
           return NULL;
         }
         return new VerificationMethod($id, $key, is_string($jwk['kid'] ?? NULL) ? $jwk['kid'] : NULL, $revoked, $expires);

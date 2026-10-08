@@ -57,7 +57,7 @@ final class JsonWebKeySet {
       catch (\InvalidArgumentException) {
         continue;
       }
-      if (($jwk['alg'] ?? $key->algorithm()) !== $key->algorithm()) {
+      if (isset($jwk['alg']) && (!is_string($jwk['alg']) || !$key->supports($jwk['alg']))) {
         continue;
       }
       $keys[] = ['kid' => is_string($jwk['kid'] ?? NULL) ? $jwk['kid'] : NULL, 'key' => $key];
@@ -79,7 +79,7 @@ final class JsonWebKeySet {
   public function candidates(?string $kid, string $algorithm): array {
     $candidates = [];
     foreach ($this->keys as $entry) {
-      if ($entry['key']->algorithm() === $algorithm && ($kid === NULL || $entry['kid'] === $kid)) {
+      if ($entry['key']->supports($algorithm) && ($kid === NULL || $entry['kid'] === $kid)) {
         $candidates[] = $entry['key'];
       }
     }
@@ -113,7 +113,11 @@ final class JsonWebKeySet {
       if ($entry['kid'] !== NULL) {
         $jwk['kid'] = $entry['kid'];
       }
-      $jwk['alg'] = $entry['key']->algorithm();
+      // An RSA key whose JWK named no algorithm verifies any RSA one, which
+      // an "alg" member would narrow.
+      if ($entry['key']->keyType() !== 'RSA') {
+        $jwk['alg'] = $entry['key']->algorithm();
+      }
       $jwk['use'] = 'sig';
       $keys[] = $jwk;
     }

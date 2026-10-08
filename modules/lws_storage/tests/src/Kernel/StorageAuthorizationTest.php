@@ -240,6 +240,50 @@ final class StorageAuthorizationTest extends LwsStorageKernelTestBase {
   }
 
   /**
+   * Tests access tokens signed with RSA, as some authorization servers sign.
+   */
+  public function testRsaAuthorizationServer(): void {
+    $key = openssl_pkey_new(['private_key_type' => OPENSSL_KEYTYPE_RSA, 'private_key_bits' => 2048]);
+    $this->assertNotFalse($key);
+    $details = openssl_pkey_get_details($key);
+    $this->assertIsArray($details);
+    $b64 = static fn (string $bytes): string => rtrim(strtr(base64_encode($bytes), '+/', '-_'), '=');
+    $jwk = ['kty' => 'RSA', 'kid' => 'rsa-key', 'n' => $b64($details['rsa']['n']), 'e' => $b64($details['rsa']['e'])];
+    $this->container->get('entity_type.manager')->getStorage('lws_trusted_as')->create([
+      'id' => 'rsa',
+      'label' => 'RSA',
+      'issuer' => 'https://rsa-as.example',
+      'jwks' => json_encode(['keys' => [$jwk]], JSON_THROW_ON_ERROR),
+    ])->save();
+    $this->storages->createStorage('carol', 'Carol', [self::ALICE], NULL, 'rsa');
+    $realm = self::BASE . '/lws/carol/';
+    $sign = static function (string $algorithm, array $claims) use ($b64, $key): string {
+      $input = $b64((string) json_encode(['alg' => $algorithm, 'typ' => 'at+jwt', 'kid' => 'rsa-key'])) . '.' . $b64((string) json_encode($claims, JSON_UNESCAPED_SLASHES));
+      openssl_sign($input, $signature, $key, $algorithm === 'RS512' ? OPENSSL_ALGO_SHA512 : OPENSSL_ALGO_SHA256);
+      return $input . '.' . $b64((string) $signature);
+    };
+    $claims = [
+      'iss' => 'https://rsa-as.example',
+      'sub' => self::ALICE,
+      'client_id' => 'https://app.example/id',
+      'aud' => $realm,
+      'iat' => time(),
+      'exp' => time() + 300,
+      'jti' => bin2hex(random_bytes(8)),
+    ];
+    foreach (['RS256', 'RS512'] as $algorithm) {
+      $this->assertSame(200, $this->get('/lws/carol/root/', $sign($algorithm, $claims))->getStatusCode(), $algorithm);
+    }
+    // The signature is bound to its algorithm and its claims.
+    $token = $sign('RS256', $claims);
+    [$header, , $signature] = explode('.', $token);
+    $other = $b64((string) json_encode(['sub' => self::BOB] + $claims));
+    $this->assertChallenge($this->get('/lws/carol/root/', "$header.$other.$signature"), 'invalid_token', $realm, 'https://rsa-as.example');
+    $relabelled = $b64((string) json_encode(['alg' => 'PS256', 'typ' => 'at+jwt', 'kid' => 'rsa-key']));
+    $this->assertChallenge($this->get('/lws/carol/root/', "$relabelled." . explode('.', $token)[1] . ".$signature"), 'invalid_token', $realm, 'https://rsa-as.example');
+  }
+
+  /**
    * Tests a storage with no authorization server to send clients to.
    */
   public function testNoAuthorizationServer(): void {
