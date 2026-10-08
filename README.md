@@ -11,13 +11,15 @@ is in [DESIGN.md](DESIGN.md).
 | `lws_authz` | Access tokens: the site's own authorization server, trusted external ones, token validation, the access decision |
 | `lws_storage` | Storages and their resources: the storage description, containers, data resources, linksets, the administration pages, Drush commands |
 | `lws_notify` | Notifications: the notification service, webhook subscriptions, and signed deliveries of changes and of access requests and grants (optional) |
+| `lws_index` | The type index and type search services: the types of what an agent may read, and the resources that match a filter on types and links (optional) |
 
 ## Status
 
-**Step S6, notifications** (DESIGN.md §10), after S1, storages, A1, access
+**Step S7, the type index** (DESIGN.md §10), after S1, storages, A1, access
 tokens, S2, data resources, S3, pagination, S4, metadata and JSON Patch, A2, the
 authorization server, A3, access policies, A4, access requests and grants, S5,
-hardening and the administration pages, and A5, OpenID Connect. Storages are created at *Content ›
+hardening and the administration pages, A5, OpenID Connect, and S6,
+notifications. Storages are created at *Content ›
 LWS storages* or with Drush; everything in them is managed over HTTP, with
 access tokens the site issues itself, for self-signed credentials or OpenID
 Connect ID Tokens, by their controllers and by the agents their access policies
@@ -42,6 +44,8 @@ allow:
 | `POST /lws/{storage}/notifications/` | With `lws_notify`: a `WebhookSubscription` (`application/lws+json`) to resources the agent may read, delivered to its `inbox` ([Notifications](#notifications)) |
 | `GET` the service, or a subscription | The agent's live subscriptions, as an LWS container; a subscription's state, to its agent and the controllers |
 | `DELETE` a subscription | Cancels it (its agent or a controller) |
+| `GET /lws/{storage}/types/index` | With `lws_index`: the distinct types of the resources the agent may read, as a paged `TypeIndex` ([Type index and search](#type-index-and-search)) |
+| `QUERY /lws/{storage}/types/search` | With `lws_index`: the resources the agent may read that match an `application/lws-query+json` filter on types and links, as a paged `ContainerPage` |
 | `GET /.well-known/lws-configuration` | The authorization server's metadata (RFC 8414) |
 | `POST /lws/oauth/token` | Token exchange (RFC 8693): a self-signed credential or an OpenID Connect ID Token for an access token to a storage |
 | `GET /lws/oauth/jwks` | The keys that sign access tokens |
@@ -84,7 +88,7 @@ drush lws:gc                                           # sweep unreferenced cont
 | `/admin/content/lws/{id}/resources` | A read-only resource browser, which is a View (`lws_resources`, with Views): path, kind, media type, size, creator, and *Download* and *Create media item* |
 | `/admin/content/lws/{id}/subscriptions` | With `lws_notify`: who subscribed to what, where it is delivered, and how deliveries fare; *Cancel* |
 | `/admin/content/lws/{id}/delete` | Deletes it with everything in it; a large storage is blocked first and emptied in a batch |
-| *Configuration › Web services › Linked Web Storage* | The base URL, path prefix and concealment; on the *Storages* tab, where content goes, the largest content, the largest recursive delete, the page size and whether changes need `If-Match`; on the *Notifications* tab, whether activities name their actor, the limits on subscriptions, and how deliveries are made and retried |
+| *Configuration › Web services › Linked Web Storage* | The base URL, path prefix and concealment; on the *Storages* tab, where content goes, the largest content, the largest recursive delete, the page size and whether changes need `If-Match`; on the *Notifications* tab, whether activities name their actor, the limits on subscriptions, and how deliveries are made and retried; on the *Type index* tab, the relations searches may filter on |
 
 *Create media item* (with Media) copies a data resource's content into a new,
 unpublished Media item of a type made from a file. The copy is the site's: later
@@ -176,6 +180,58 @@ drush lws:notify:list alice                # the subscriptions to a storage
 drush lws:notify:cancel alice <uuid>
 drush lws:notify:key:rotate                # a new webhook signing key, as the web server's user
 drush queue:run lws_notify_delivery        # deliver what waits for cron now
+```
+
+## Type index and search
+
+With `lws_index` enabled, each storage description advertises a
+`TypeIndexService` and a `TypeSearchService`
+([lws10-index](https://w3c.github.io/lws-protocol/lws10-index/)). A search is
+an HTTP `QUERY` (RFC 10008) whose body is a filter in conjunctive normal form:
+each member names a relation, and holds groups that must all match, each an
+IRI or an array of IRIs of which one must.
+
+```http
+QUERY /lws/alice/types/search HTTP/1.1
+Content-Type: application/lws-query+json
+
+{"type": [["https://schema.org/Person", "http://xmlns.com/foaf/0.1/Person"], "https://www.w3.org/ns/lws#DataResource"],
+ "describedby": ["https://shapes.example/PersonShape"]}
+```
+
+- **What is indexed.** Each resource's types, as its `Link` headers and
+  linkset declare them, with its class (`lws:Container` or
+  `lws:DataResource`), and the targets of the other links its clients set. The
+  index changes in the same transaction as the resource, so it is never
+  behind. Types are not read from the content: a type stated only in a Turtle
+  or JSON-LD body is not found.
+- **Which relations a search may filter on.** `type`, and the descriptive
+  relations listed on the *Type index* settings tab: by default `about`,
+  `author`, `cite-as`, `describedby`, `license`, `profile` and `related`.
+  Structural relations, such as `up` or `self`, never. The list is not
+  published: a filter on any other relation finds nothing, as one on a target
+  nothing declares does.
+- **What an agent sees.** Only the resources it may read, and the types they
+  bear, decided when it asks: removing someone's access removes their results
+  at once. Searching needs no token; without one, an agent finds what is
+  public. As for listings, an agent who may not read the whole storage has
+  each resource checked, a page examines at most
+  `$settings['lws_storage_scan_limit']` resources, and `totalItems` counts
+  what it may see among the first of them.
+- **Pages.** Results come in the order resources were made, types in code
+  point order, both in pages of the storage's page size, linked with `first`
+  and `next`. A search's page links are read with `GET`: each carries the
+  filter, encrypted, so the server keeps nothing between pages.
+- **Errors.** `400` without a `Content-Type`, or for a body that is not a
+  filter (an empty group, a value that is not an absolute IRI); `415`, with
+  `Accept-Query`, for another query format; `406` when `Accept` excludes JSON;
+  `422` for a filter of more than 32 groups, 64 IRIs or 4,096 bytes, which is
+  never narrowed instead; `404` for a page link that is not one.
+  `OPTIONS` answers `Allow: GET, HEAD, QUERY, OPTIONS` and
+  `Accept-Query: application/lws-query+json`.
+
+```sh
+drush lws:index:rebuild                    # index every resource again
 ```
 
 ## Access tokens
@@ -345,6 +401,9 @@ SIMPLETEST_DB=sqlite://localhost//tmp/lws-test.sqlite vendor/bin/phpunit -c web/
   *Deliver at the end of the request* and run the delivery queue often. Inboxes
   must be HTTPS URLs of public hosts; in development, exempt others with
   `lws_outbound_allowlist`.
+- **Let `QUERY` through.** Type searches use the HTTP `QUERY` method
+  (RFC 10008). Apache and PHP pass it to Drupal, but some proxies, CDNs and
+  web application firewalls refuse methods they do not know.
 - **Web servers refuse some paths before Drupal sees them:**
   - Drupal's `.htaccess` answers `403` for any path segment that starts with a
     dot, such as `/lws/alice/root/.profile`. LWS never gives a resource such a

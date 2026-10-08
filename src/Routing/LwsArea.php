@@ -23,6 +23,9 @@ enum LwsArea: string {
   // The notification service, or one of its subscriptions.
   case Notifications = 'notifications';
 
+  // The type index or type search service.
+  case Types = 'types';
+
   // Well-formed, but nothing can exist there.
   case Unknown = 'unknown';
 
@@ -39,6 +42,7 @@ enum LwsArea: string {
       self::Meta => '/_lws/meta',
       self::Access => '/_lws/access',
       self::Notifications => '/_lws/notifications',
+      self::Types => '/_lws/types',
       self::Unknown, self::Malformed => '/_lws/unknown',
     };
   }

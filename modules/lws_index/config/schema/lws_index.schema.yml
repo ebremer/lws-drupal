@@ -1,0 +1,10 @@
+lws_index.settings:
+  type: config_object
+  label: 'LWS type index settings'
+  mapping:
+    relations:
+      type: sequence
+      label: 'The descriptive link relations searches may filter on, besides type: registered relation types in lower case, extension relations as URIs'
+      sequence:
+        type: string
+        label: 'Relation'

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Drupal\lws\Routing;
 
+use Ebremer\Lws\MediaType;
+
 /**
  * What a request URL addresses in the LWS URL space.
  *
@@ -31,7 +33,8 @@ final class LwsTarget {
    * @param string|null $error
    *   For malformed paths, why the path was rejected.
    * @param string|null $service
-   *   For the access services, "requests" or "grants".
+   *   For the access services, "requests" or "grants"; for the type
+   *   services, "index" or "search".
    * @param string|null $recordId
    *   For an entry of an access service or a subscription of the
    *   notification service, its UUID; NULL for the service.
@@ -109,6 +112,20 @@ final class LwsTarget {
   }
 
   /**
+   * The type index or type search service (lws10-index).
+   *
+   * @param string $rawPath
+   *   The request path.
+   * @param string $storage
+   *   The storage slug.
+   * @param string $service
+   *   The service: "index" or "search".
+   */
+  public static function types(string $rawPath, string $storage, string $service): self {
+    return new self(LwsArea::Types, $rawPath, $storage, service: $service);
+  }
+
+  /**
    * A well-formed path at which nothing can exist.
    */
   public static function unknown(string $rawPath, ?string $storage = NULL): self {
@@ -156,8 +173,25 @@ final class LwsTarget {
         ? ['GET', 'HEAD', 'POST', 'OPTIONS']
         : ['GET', 'HEAD', 'DELETE', 'OPTIONS'],
       LwsArea::Description => ['GET', 'HEAD', 'OPTIONS'],
+      // A search is a QUERY (RFC 10008); the pages of its results, and of the
+      // type index, are read with GET.
+      LwsArea::Types => $this->service === 'search'
+        ? ['GET', 'HEAD', 'QUERY', 'OPTIONS']
+        : ['GET', 'HEAD', 'OPTIONS'],
       LwsArea::Unknown, LwsArea::Malformed => [],
     };
+  }
+
+  /**
+   * The query formats a QUERY to the target may carry (RFC 10008 §3).
+   *
+   * Like the methods, they depend only on the shape of the URL.
+   *
+   * @return list<string>
+   *   Media types; none where QUERY is not allowed.
+   */
+  public function queryFormats(): array {
+    return in_array('QUERY', $this->allowedMethods(), TRUE) ? [MediaType::LWS_QUERY_JSON] : [];
   }
 
 }

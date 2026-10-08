@@ -1,0 +1,9 @@
+name: 'LWS Type Index'
+type: module
+description: 'Lets clients find the resources of W3C Linked Web Storage (LWS) storages by type: the type index and type search services.'
+package: 'Linked Web Storage'
+core_version_requirement: ^11.3
+configure: lws_index.settings
+dependencies:
+  - lws:lws
+  - lws:lws_storage

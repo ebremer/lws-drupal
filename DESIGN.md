@@ -896,15 +896,19 @@ are described briefly here; each gets its own design note when it starts.
 
 ### 7.2 `lws_index`: type index and type search
 
-- **`GET types/index`** returns a paginated `TypeIndex` of the distinct types the agent can see.
+- **`GET types/index`** returns a paginated `TypeIndex` of the distinct types of the resources the
+  agent can read.
 - **`QUERY types/search`** (RFC 10008) takes `application/lws-query+json`, a conjunctive normal
-  form over `type` and indexed relations. Errors are `400`, `415` (with `Accept-Query`), `406` and
-  `422`. `OPTIONS` returns `Allow: OPTIONS, QUERY` and `Accept-Query`.
-- **Storage.** A derived table `lws_index_link(resource_id, rel, href)`, kept up to date from
-  `LwsResourceEvent`, which the index spec allows to be eventually consistent. Results are always
-  filtered live through `forAgent()`.
-- **Risk to check first.** `QUERY` must survive the web server and Drupal's method matching. This
-  is a spike before the step.
+  form over `type` and the descriptive relations the site lets searches filter on, and answers a
+  paginated `ContainerPage`. Errors are `400`, `415` (with `Accept-Query`), `406`, `422` and, for
+  a page link that is not one, `404`. `OPTIONS` returns `Allow: GET, HEAD, QUERY, OPTIONS` and
+  `Accept-Query`; `GET` serves only the pages of results.
+- **Storage.** A derived table, `lws_index_link(resource_id, storage_id, rel, href, hash)`, kept
+  by entity hooks in the transaction that changes the resource. The index spec allows it to lag;
+  this one does not. Results are always filtered live through `forAgent()`, and narrowed to where
+  the agent may read anything (`readableTargets()`).
+- **Risk checked first.** `QUERY` survives Apache, Symfony 7.4 (which counts it as safe) and
+  Drupal's method matching.
 
 ### 7.3 `lws_identity`: Drupal users as LWS agents
 
@@ -1545,8 +1549,91 @@ with no adapters.
   - the development site allow-lists its own origin, `http://localhost:8899`, as Touchstone
     subscribes with the storage URI as the inbox of the subscriptions it never delivers to.
 
-**S7–S8.** These are `lws_index` and `lws_projection`, in that order, each optional
-([§7](#7-optional-modules)).
+**S7. Type index (`lws_index`).**
+
+- **Scope:** the type index and type search services, the index they look up, and their discovery
+  ([§7.2](#72-lws_index-type-index-and-type-search)).
+- **Spec:** lws10-index; RFC 10008.
+- **Exit:** Touchstone's `index` suite passes.
+
+**Done.** Differences from the plan above:
+
+- **Built as planned:**
+  - **The spike.** `QUERY` reaches Drupal: Apache passes it to PHP, Symfony 7.4 knows it as a
+    safe method, and Drupal's router matches a route with `methods: [QUERY]`.
+  - **The services.** `{s}/types/index` and `{s}/types/search` (`LwsArea::Types`) are advertised
+    as `TypeIndexService` and `TypeSearchService`. `LwsTarget::queryFormats()` gives
+    `Accept-Query`, on `OPTIONS` and on a `415`, from the shape of the URL, as `Allow` is.
+  - **Filters** (`FilterParser`):
+    - `@` members are ignored, a member whose value is an empty array is no constraint, and
+      duplicate groups count once. Registered relation types compare case-insensitively.
+    - `400` for a body that is not a JSON object, a value that is not an array, a group that is
+      empty or holds anything but IRIs, and a value that is not an absolute IRI (RFC 3987, with
+      at most one `#`).
+    - `422` beyond 32 groups, 64 IRIs or 4,096 bytes in all; a filter is never narrowed.
+  - **Results** are `ContainerPage`s without an `id`. Their items are described as container
+    members are (`ResourceLinks::describe()`, now shared with listings) and negotiated as listings
+    are, with `Vary: Accept, Authorization` and `Cache-Control: private`. There is no
+    `Content-Location`.
+  - **Authorization** is decided for each request through `forAgent()`, and counts are of the
+    agent's view.
+- **Built differently:**
+  - **The index is kept by entity hooks, not from `LwsResourceEvent`.** The hooks run inside the
+    transaction that saves or deletes the resource, so the index is never behind and rolls back
+    with the change. Events come after the commit: a failure between the two would leave the
+    index wrong until a rebuild. `lws_index_link` holds the resource, its storage, the relation,
+    the target and a SHA-256 of relation and target, which queries look up. Types include the LWS
+    class. Installing the module indexes the resources that exist; `drush lws:index:rebuild` does
+    it again.
+  - **Every relation clients set is indexed; which ones a search may filter on is decided when it
+    runs.**
+    - `lws_index.settings:relations` lists them, by default `about`, `author`, `cite-as`,
+      `describedby`, `license`, `profile` and `related`, and a *Type index* settings tab edits
+      the list.
+    - Structural relations (`up`, `self`, `linkset`, the pagination relations and others) are
+      refused there, and ignored if configured anyway.
+    - Changing the list needs no rebuild.
+    - A filter on any other relation runs as one on a target nothing declares: the same query,
+      with a hash no entry has. Neither the answer nor its timing tells the configuration.
+  - **Narrowing.** `AgentAccessScopeInterface` gained `readableTargets()`: the resources and
+    containers whose subtrees hold everything an agent may read, from its policies' targets, or
+    NULL when there is no such bound. For an agent who may not read the whole storage, a search
+    looks only there (path hashes, and path prefixes for containers), then checks each resource
+    it finds. A few grants in a large storage then cost little. As for filtered listings, a page
+    examines at most the scan limit and may end early with `next`, and counts are of what the
+    agent may see among the first resources examined.
+  - **The type index of such an agent** checks the types in order, each until it finds a resource
+    the agent may read that bears it. A page that reaches the scan limit links a next page that
+    goes on from that type and resource.
+  - **Result pages are read with `GET`.**
+    - A search's `first` and `next` links are `types/search?page=…`, with a cursor that carries
+      the filter and the position, compressed and encrypted with `PaginationCursor`.
+    - The server keeps no state between pages.
+    - A cursor is bound to the storage and the service, not to the agent: whoever follows a link
+      sees only what they may read.
+    - `types/search` therefore allows `GET` and `HEAD`; without a cursor they answer `400`.
+  - **Anonymous agents may search,** and find what is public, rather than being challenged: the
+    services are not resources a token unlocks.
+- **Left out:**
+  - types read from content (a MAY): parsing Turtle or JSON-LD is a non-goal ([§1](#1-goals-and-non-goals));
+  - `Content-Location` result resources;
+  - query formats other than `application/lws-query+json`.
+- **Verified:**
+  - 637 tests; phpcs and phpstan (level 8) are clean;
+  - Touchstone `index`: 35 passed, 2 failed (both advisory), 2 inapplicable.
+    - `type-search-type-from-content` (MAY) fails, as types are not read from content.
+    - `type-search-reflects-update` (SHOULD) fails. It changes the types with a `PUT` that
+      carries `Link` headers but no `Prefer: set-linkset`, which core says must not change
+      metadata, so only a server that reads the Turtle body can pass it.
+    - Inapplicable: `type-search-content-location-protected`, as there is no `Content-Location`;
+      and at the default page size `type-search-next-page`. That one passes with a page size of
+      2, where `type-search-and-or` becomes inapplicable instead, as it reads only the first
+      page.
+  - Touchstone `core`: 117 passed, 0 failed, 6 inapplicable, as before;
+  - only on SQLite. The new queries (correlated `EXISTS`, `DISTINCT` ordered by an alias, `LIKE`
+    on path prefixes) wait for the database CI.
+
+**S8.** This is `lws_projection`, optional ([§7](#7-optional-modules)).
 
 ### Authorization module steps
 

@@ -1,0 +1,37 @@
+services:
+  lws_index.indexer:
+    class: Drupal\lws_index\Indexer
+    arguments: ['@database', '@lws_storage.resource_links', '@entity_type.manager']
+  Drupal\lws_index\Indexer: '@lws_index.indexer'
+
+  lws_index.relations:
+    class: Drupal\lws_index\Relations
+    arguments: ['@config.factory']
+  Drupal\lws_index\Relations: '@lws_index.relations'
+
+  lws_index.queries:
+    class: Drupal\lws_index\IndexQueries
+    arguments: ['@database', '@lws.url_generator', '@entity_type.manager']
+  Drupal\lws_index\IndexQueries: '@lws_index.queries'
+
+  lws_index.type_search:
+    class: Drupal\lws_index\TypeSearch
+    arguments: ['@lws_index.queries', '@lws_index.relations', '@lws_storage.resource_links', '@lws_storage.resource_repository', '@lws_storage.container_pager']
+  Drupal\lws_index\TypeSearch: '@lws_index.type_search'
+
+  lws_index.type_index:
+    class: Drupal\lws_index\TypeIndex
+    arguments: ['@lws_index.queries', '@lws_storage.resource_links', '@lws_storage.resource_repository', '@lws_storage.container_pager']
+  Drupal\lws_index\TypeIndex: '@lws_index.type_index'
+
+  lws_index.cursors:
+    class: Drupal\lws_index\Cursors
+    arguments: ['@lws.pagination_cursor']
+  Drupal\lws_index\Cursors: '@lws_index.cursors'
+
+  # The TypeIndexService and TypeSearchService of storage descriptions.
+  lws_index.index_services:
+    class: Drupal\lws_index\IndexServices
+    arguments: ['@lws.url_generator']
+    tags:
+      - { name: lws.storage_service, priority: 40 }

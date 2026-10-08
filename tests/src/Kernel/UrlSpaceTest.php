@@ -65,8 +65,10 @@ final class UrlSpaceTest extends KernelTestBase {
   public function testNoStorages(): void {
     $this->assertProblem($this->send('GET', '/lws/alice/'), 404, self::BASE . '/lws/alice/');
     $this->assertProblem($this->send('GET', '/lws/alice/root/'), 404, self::BASE . '/lws/alice/root/');
-    // Nor does a notification service, without lws_notify.
+    // Nor does a notification service, without lws_notify, or a type index,
+    // without lws_index.
     $this->assertProblem($this->send('GET', '/lws/alice/notifications/'), 404, self::BASE . '/lws/alice/notifications/');
+    $this->assertProblem($this->send('GET', '/lws/alice/types/index'), 404, self::BASE . '/lws/alice/types/index');
     // A name with a file extension gets problem details, not core's fast 404.
     $this->assertProblem($this->send('GET', '/lws/alice/root/notes.txt'), 404, self::BASE . '/lws/alice/root/notes.txt');
   }

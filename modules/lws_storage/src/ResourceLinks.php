@@ -48,6 +48,32 @@ final class ResourceLinks {
   }
 
   /**
+   * How a container listing describes a resource (LWS Core §8.1).
+   *
+   * Type searches describe the resources they find the same way
+   * (lws10-index).
+   *
+   * @return array<string, mixed>
+   *   Its type, as "Container" or "DataResource" and the types clients
+   *   declared, its URI, and for a data resource its format and size; and
+   *   when it last changed.
+   */
+  public function describe(LwsStorageInterface $storage, LwsResourceInterface $resource): array {
+    $class = $resource->isContainer() ? 'Container' : 'DataResource';
+    $types = $resource->getUserMetadata()->types;
+    $description = [
+      'type' => $types === [] ? $class : [$class, ...$types],
+      'id' => $this->uri($storage, $resource),
+    ];
+    if (!$resource->isContainer()) {
+      $description['format'] = $resource->getMediaType();
+      $description['size'] = $resource->getSize();
+    }
+    $description['modified'] = gmdate('Y-m-d\TH:i:s\Z', $resource->getChangedTime());
+    return $description;
+  }
+
+  /**
    * The server-managed links of a resource (LWS Core §8.1, §9.1).
    *
    * @return list<string>

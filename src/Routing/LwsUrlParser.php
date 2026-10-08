@@ -20,7 +20,8 @@ use Drupal\Core\Config\ConfigFactoryInterface;
  * - {storage}/root/…      containers ("…/") and data resources;
  * - {storage}/meta/{uuid} linkset resources;
  * - {storage}/access/{requests|grants}/[{uuid}] the access services;
- * - {storage}/notifications/[{uuid}] the notification service.
+ * - {storage}/notifications/[{uuid}] the notification service;
+ * - {storage}/types/{index|search} the type index and type search services.
  */
 final class LwsUrlParser {
 
@@ -124,6 +125,9 @@ final class LwsUrlParser {
     }
     if (preg_match('#^notifications/(' . substr(self::UUID, 2, -2) . ')?$#', $path, $matches) === 1) {
       return LwsTarget::notifications($rawPath, $storage, ($matches[1] ?? '') === '' ? NULL : $matches[1]);
+    }
+    if ($path === 'types/index' || $path === 'types/search') {
+      return LwsTarget::types($rawPath, $storage, substr($path, 6));
     }
     return LwsTarget::unknown($rawPath, $storage);
   }

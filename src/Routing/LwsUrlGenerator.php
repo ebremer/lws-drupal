@@ -105,6 +105,18 @@ final class LwsUrlGenerator {
   }
 
   /**
+   * The URI of the type index or type search service (lws10-index).
+   *
+   * @param string $storage
+   *   The storage slug.
+   * @param string $service
+   *   The service: "index" or "search".
+   */
+  public function typesUri(string $storage, string $service): string {
+    return $this->storageUri($storage) . 'types/' . $service;
+  }
+
+  /**
    * The URI of a resource's linkset.
    *
    * @param string $storage
@@ -129,6 +141,7 @@ final class LwsUrlGenerator {
       LwsArea::Meta => $this->metaUri($target->storage, (string) $target->metaId),
       LwsArea::Access => $this->accessUri($target->storage, (string) $target->service, $target->recordId),
       LwsArea::Notifications => $this->notificationsUri($target->storage, $target->recordId),
+      LwsArea::Types => $this->typesUri($target->storage, (string) $target->service),
       LwsArea::Unknown, LwsArea::Malformed => NULL,
     };
   }

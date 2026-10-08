@@ -59,6 +59,13 @@ final class PartialReader implements AccessDecisionInterface {
         return PartialReader::readable($resource);
       }
 
+      /**
+       * {@inheritdoc}
+       */
+      public function readableTargets(): ?array {
+        return NULL;
+      }
+
     };
   }
 

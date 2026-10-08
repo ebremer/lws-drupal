@@ -1,0 +1,70 @@
+<?php
+
+/**
+ * @file
+ * Install functions for LWS Type Index.
+ */
+
+declare(strict_types=1);
+
+use Drupal\lws_index\Indexer;
+
+/**
+ * Implements hook_schema().
+ *
+ * @phpstan-return array<string, array<string, mixed>>
+ */
+function lws_index_schema(): array {
+  $schema[Indexer::TABLE] = [
+    'description' => 'The types and descriptive links of LWS resources, which type searches look up.',
+    'fields' => [
+      'resource_id' => [
+        'description' => 'The ID of the lws_resource.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ],
+      'storage_id' => [
+        'description' => 'The ID of its lws_storage.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ],
+      'rel' => [
+        'description' => 'The relation: "type", a registered relation type in lower case, or an extension relation URI.',
+        'type' => 'varchar_ascii',
+        'length' => Indexer::MAX_REL_BYTES,
+        'not null' => TRUE,
+        'binary' => TRUE,
+      ],
+      'href' => [
+        'description' => 'The link target: a type, or another absolute URI.',
+        'type' => 'varchar_ascii',
+        'length' => Indexer::MAX_HREF_BYTES,
+        'not null' => TRUE,
+        'binary' => TRUE,
+      ],
+      'hash' => [
+        'description' => 'The SHA-256 of the relation, a line feed and the target, in hex: what searches look up.',
+        'type' => 'varchar_ascii',
+        'length' => 64,
+        'not null' => TRUE,
+      ],
+    ],
+    'primary key' => ['resource_id', 'hash'],
+    'indexes' => [
+      'search' => ['storage_id', 'hash', 'resource_id'],
+      'types' => ['storage_id', 'rel', ['href', 255]],
+    ],
+  ];
+  return $schema;
+}
+
+/**
+ * Implements hook_install().
+ *
+ * Indexes the resources that exist already.
+ */
+function lws_index_install(bool $is_syncing): void {
+  \Drupal::service('lws_index.indexer')->rebuild();
+}

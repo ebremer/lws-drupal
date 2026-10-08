@@ -208,10 +208,12 @@ final class ContainerPager {
   /**
    * Loads the files of data resources at once, for their format and size.
    *
+   * Type searches describe the resources they find as listings do.
+   *
    * @param list<\Drupal\lws_storage\Entity\LwsResourceInterface> $members
-   *   The members.
+   *   The resources.
    */
-  private function preloadFiles(array $members): void {
+  public function preloadFiles(array $members): void {
     $fids = [];
     foreach ($members as $member) {
       $fid = (int) $member->get('content')->target_id;

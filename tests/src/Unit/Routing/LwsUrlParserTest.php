@@ -59,6 +59,8 @@ final class LwsUrlParserTest extends UnitTestCase {
         [],
         FALSE,
       ],
+      'type index' => ['/lws/alice/types/index', LwsArea::Types, [], FALSE],
+      'type search' => ['/lws/alice/types/search', LwsArea::Types, [], FALSE],
     ];
   }
 
@@ -134,6 +136,24 @@ final class LwsUrlParserTest extends UnitTestCase {
   }
 
   /**
+   * Tests the type index and type search services.
+   */
+  public function testTypes(): void {
+    $parser = $this->parser();
+    $index = $parser->parse('/lws/alice/types/index');
+    $this->assertNotNull($index);
+    $this->assertSame('index', $index->service);
+    $this->assertSame(['GET', 'HEAD', 'OPTIONS'], $index->allowedMethods());
+    $this->assertSame([], $index->queryFormats());
+    $search = $parser->parse('/lws/alice/types/search');
+    $this->assertNotNull($search);
+    $this->assertSame('search', $search->service);
+    $this->assertSame(['GET', 'HEAD', 'QUERY', 'OPTIONS'], $search->allowedMethods());
+    $this->assertSame(['application/lws-query+json'], $search->queryFormats());
+    $this->assertSame([], $parser->parse('/lws/alice/root/')?->queryFormats());
+  }
+
+  /**
    * Paths under the prefix at which nothing can exist.
    *
    * @return array<string, array{string}>
@@ -149,7 +169,10 @@ final class LwsUrlParserTest extends UnitTestCase {
       'internal path' => ['/lws/_lws/resource'],
       'root without its slash' => ['/lws/alice/root'],
       'a name that is not root' => ['/lws/alice/rooted/'],
-      'unknown service' => ['/lws/alice/types/'],
+      'types without a service' => ['/lws/alice/types/'],
+      'an unknown type service' => ['/lws/alice/types/list'],
+      'type index with a trailing slash' => ['/lws/alice/types/index/'],
+      'unknown service' => ['/lws/alice/services/'],
       'notifications without its slash' => ['/lws/alice/notifications'],
       'subscription that is not a UUID' => ['/lws/alice/notifications/42'],
       'subscription with a trailing slash' => ['/lws/alice/notifications/0b5c3a5e-6a3e-4c1f-9d2e-3f1a2b3c4d5e/'],

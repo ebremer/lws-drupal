@@ -70,7 +70,13 @@ final class LwsRequestSubscriber implements EventSubscriberInterface {
     if ($methods === []) {
       throw LwsHttpException::forUnaddressable($target);
     }
-    $event->setResponse(new Response('', Response::HTTP_NO_CONTENT, ['Allow' => implode(', ', $methods)]));
+    $headers = ['Allow' => implode(', ', $methods)];
+    // The query formats are advertised where QUERY is allowed (RFC 10008
+    // §3); like the methods, they depend only on the URL.
+    if ($target->queryFormats() !== []) {
+      $headers['Accept-Query'] = implode(', ', $target->queryFormats());
+    }
+    $event->setResponse(new Response('', Response::HTTP_NO_CONTENT, $headers));
   }
 
 }

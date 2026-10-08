@@ -1,0 +1,8 @@
+relations:
+  - about
+  - author
+  - cite-as
+  - describedby
+  - license
+  - profile
+  - related

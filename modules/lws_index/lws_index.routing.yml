@@ -1,0 +1,45 @@
+# The type index, {storage}/types/index, and the type search service,
+# {storage}/types/search (lws10-index). LwsPathProcessor maps both here;
+# LwsRouteEnhancer supplies $lws_target, which says which one it is, and the
+# storage slug, which the lws_storage parameter converter turns into the
+# storage (404 if there is none, 503 if it is blocked).
+lws_index.types:
+  path: '/_lws/types'
+  defaults:
+    _controller: '\Drupal\lws_index\Controller\IndexController::read'
+  methods: [GET, HEAD]
+  requirements:
+    # Anyone may ask, but not with a token that was rejected; the answer
+    # holds only what the agent may read.
+    _lws_access: 'public'
+  options:
+    _lws: TRUE
+    _auth: ['lws_bearer']
+    no_cache: TRUE
+    parameters:
+      lws_storage:
+        type: lws_storage
+
+# A search is an HTTP QUERY (RFC 10008), its filter in the body.
+lws_index.types.query:
+  path: '/_lws/types'
+  defaults:
+    _controller: '\Drupal\lws_index\Controller\IndexController::query'
+  methods: [QUERY]
+  requirements:
+    _lws_access: 'public'
+  options:
+    _lws: TRUE
+    _auth: ['lws_bearer']
+    no_cache: TRUE
+    parameters:
+      lws_storage:
+        type: lws_storage
+
+lws_index.settings:
+  path: '/admin/config/services/lws/index'
+  defaults:
+    _form: '\Drupal\lws_index\Form\IndexSettingsForm'
+    _title: 'Type index'
+  requirements:
+    _permission: 'administer lws'

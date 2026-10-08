@@ -55,13 +55,13 @@ final class PolicyAccessDecision implements AccessDecisionInterface {
    */
   public function forAgent(RequestingAgent $agent, StorageRef $storage): AgentAccessScopeInterface {
     if (self::controls($agent, $storage)) {
-      return new PolicyAccessScope($agent, [], $this->time->getRequestTime(), TRUE);
+      return new PolicyAccessScope($agent, $storage, [], $this->time->getRequestTime(), TRUE);
     }
     $readers = array_values(array_filter(
       $this->policies->forAssignees($storage->id, self::assignees($agent)),
       static fn (AccessPolicy $policy): bool => in_array(Action::Read->value, $policy->actions, TRUE),
     ));
-    return new PolicyAccessScope($agent, $readers, $this->time->getRequestTime(), FALSE);
+    return new PolicyAccessScope($agent, $storage, $readers, $this->time->getRequestTime(), FALSE);
   }
 
   /**

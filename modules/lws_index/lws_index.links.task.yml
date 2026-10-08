@@ -1,0 +1,5 @@
+lws_index.settings:
+  title: 'Type index'
+  route_name: lws_index.settings
+  base_route: lws.settings
+  weight: 30

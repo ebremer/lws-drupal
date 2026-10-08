@@ -103,6 +103,16 @@ final class LwsHttpException extends HttpException {
   }
 
   /**
+   * Creates a 415 error for a QUERY in a format the target does not accept.
+   *
+   * @param list<string> $accepted
+   *   The query formats it accepts, for Accept-Query (RFC 10008 §3).
+   */
+  public static function unsupportedQueryFormat(array $accepted): self {
+    return new self(415, 'This query format is not supported. Accept-Query lists those that are.', NULL, ['Accept-Query' => implode(', ', $accepted)]);
+  }
+
+  /**
    * Creates a 422 Unprocessable Content error.
    */
   public static function unprocessable(string $detail): self {

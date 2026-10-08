@@ -8,11 +8,12 @@ use Drupal\lws\Access\Action;
 use Drupal\lws\Access\AgentAccessScopeInterface;
 use Drupal\lws\Access\ResourceContext;
 use Drupal\lws\Agent\RequestingAgent;
+use Drupal\lws\Storage\StorageRef;
 use Drupal\lws_authz\Policy\PolicyEvaluator;
 use Ebremer\Lws\ResourceType;
 
 /**
- * What one agent may read in one storage, for container listings.
+ * What one agent may read in one storage, for container listings and searches.
  *
  * The agent's read policies are loaded once; each question is then answered
  * in memory.
@@ -24,6 +25,8 @@ final class PolicyAccessScope implements AgentAccessScopeInterface {
    *
    * @param \Drupal\lws\Agent\RequestingAgent $agent
    *   The agent.
+   * @param \Drupal\lws\Storage\StorageRef $storage
+   *   The storage.
    * @param list<\Drupal\lws_authz\Policy\AccessPolicy> $policies
    *   The policies that let the agent read something in the storage.
    * @param int $now
@@ -33,6 +36,7 @@ final class PolicyAccessScope implements AgentAccessScopeInterface {
    */
   public function __construct(
     private readonly RequestingAgent $agent,
+    private readonly StorageRef $storage,
     private readonly array $policies,
     private readonly int $now,
     private readonly bool $controls,
@@ -62,6 +66,26 @@ final class PolicyAccessScope implements AgentAccessScopeInterface {
       }
     }
     return FALSE;
+  }
+
+  /**
+   * {@inheritdoc}
+   *
+   * A policy covers the resources it targets and everything below them
+   * (PolicyEvaluator::covers()); one that targets the storage, everything.
+   */
+  public function readableTargets(): ?array {
+    if ($this->controls) {
+      return NULL;
+    }
+    $targets = [];
+    foreach ($this->policies as $policy) {
+      if (in_array($this->storage->uri, $policy->targetValues, TRUE)) {
+        return NULL;
+      }
+      array_push($targets, ...$policy->targetValues);
+    }
+    return array_values(array_unique($targets));
   }
 
   /**

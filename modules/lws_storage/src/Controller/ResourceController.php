@@ -248,21 +248,7 @@ final class ResourceController implements ContainerInjectionInterface {
       }
     }
 
-    $items = [];
-    foreach ($page->members as $member) {
-      $class = $member->isContainer() ? 'Container' : 'DataResource';
-      $types = $member->getUserMetadata()->types;
-      $item = [
-        'type' => $types === [] ? $class : [$class, ...$types],
-        'id' => $this->links->uri($storage, $member),
-      ];
-      if (!$member->isContainer()) {
-        $item['format'] = $member->getMediaType();
-        $item['size'] = $member->getSize();
-      }
-      $item['modified'] = gmdate('Y-m-d\TH:i:s\Z', $member->getChangedTime());
-      $items[] = $item;
-    }
+    $items = array_map(fn (LwsResourceInterface $member): array => $this->links->describe($storage, $member), $page->members);
     $body = [
       '@context' => Vocabulary::LWS_CONTEXT,
       'id' => $uri,
