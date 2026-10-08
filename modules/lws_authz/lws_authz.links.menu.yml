@@ -1,0 +1,5 @@
+entity.lws_trusted_as.collection:
+  title: 'LWS authorization servers'
+  description: 'The authorization servers whose access tokens LWS storages accept.'
+  route_name: entity.lws_trusted_as.collection
+  parent: system.admin_config_services

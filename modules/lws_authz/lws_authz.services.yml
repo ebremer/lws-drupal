@@ -1,0 +1,37 @@
+services:
+  logger.channel.lws_authz:
+    parent: logger.channel_base
+    arguments: ['lws_authz']
+
+  lws_authz.authorization_servers:
+    class: Drupal\lws_authz\AuthorizationServers
+    arguments: ['@entity_type.manager', '@config.factory']
+  Drupal\lws_authz\AuthorizationServers: '@lws_authz.authorization_servers'
+
+  lws_authz.keys:
+    class: Drupal\lws_authz\Token\AuthorizationServerKeys
+    arguments: ['@lws.outbound_http', '@cache.lws', '@flood', '@datetime.time', '@logger.channel.lws_authz']
+  Drupal\lws_authz\Token\AuthorizationServerKeys: '@lws_authz.keys'
+
+  lws_authz.access_token_validator:
+    class: Drupal\lws_authz\Token\AccessTokenValidator
+    arguments: ['@lws_authz.keys', '@datetime.time', '@config.factory', '@logger.channel.lws_authz']
+  Drupal\lws_authz\Token\AccessTokenValidator: '@lws_authz.access_token_validator'
+
+  lws_authz.authentication.lws_bearer:
+    class: Drupal\lws_authz\Authentication\LwsBearerProvider
+    arguments:
+      - '@lws.url_parser'
+      # Provided by lws_storage; without it there are no storages to protect.
+      - '@?Drupal\lws\Storage\StorageRegistryInterface'
+      - '@lws_authz.authorization_servers'
+      - '@lws_authz.access_token_validator'
+      - '@logger.channel.lws_authz'
+    tags:
+      # Above basic_auth (100) and cookie (0). It applies only in the LWS URL
+      # space, so it takes nothing from other providers elsewhere.
+      - { name: authentication_provider, provider_id: lws_bearer, priority: 200 }
+
+  lws_authz.access_decision:
+    class: Drupal\lws_authz\Access\ControllerAccessDecision
+  Drupal\lws\Access\AccessDecisionInterface: '@lws_authz.access_decision'

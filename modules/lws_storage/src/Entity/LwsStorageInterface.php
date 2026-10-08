@@ -31,6 +31,14 @@ interface LwsStorageInterface extends ContentEntityInterface, EntityChangedInter
   public function getOwnerId(): ?int;
 
   /**
+   * The trusted authorization server of the storage, by ID.
+   *
+   * @return string|null
+   *   The ID of an lws_trusted_as entity; NULL for the site's default.
+   */
+  public function getAuthorizationServerId(): ?string;
+
+  /**
    * Whether the storage serves requests; a blocked storage answers 503.
    */
   public function isEnabled(): bool;

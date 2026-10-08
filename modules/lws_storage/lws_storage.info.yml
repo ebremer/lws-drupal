@@ -5,3 +5,4 @@ package: 'Linked Web Storage'
 core_version_requirement: ^11.3
 dependencies:
   - lws:lws
+  - lws:lws_authz

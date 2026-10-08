@@ -16,8 +16,9 @@ use Symfony\Component\HttpFoundation\Response;
 /**
  * Tests storage descriptions and containers over HTTP.
  *
- * Responses are also parsed with the PHP LWS client, so that the server's
- * output is checked against what clients expect.
+ * Requests present a token of alice, the storage's controller. Responses are
+ * also parsed with the PHP LWS client, so that the server's output is checked
+ * against what clients expect.
  */
 #[Group('lws')]
 #[RunTestsInSeparateProcesses]
@@ -31,6 +32,7 @@ final class StorageHttpTest extends LwsStorageKernelTestBase {
   protected function setUp(): void {
     parent::setUp();
     $this->storages->createStorage('alice', 'Alice', ['https://id.example/alice']);
+    $this->agent = 'https://id.example/alice';
   }
 
   /**

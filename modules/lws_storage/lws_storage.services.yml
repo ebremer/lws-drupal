@@ -22,6 +22,18 @@ services:
       # First in the description's service set.
       - { name: lws.storage_service, priority: 1000 }
 
+  lws_storage.storage_registry:
+    class: Drupal\lws_storage\StorageRegistry
+    arguments: ['@entity_type.manager', '@lws.url_generator']
+  Drupal\lws_storage\StorageRegistry: '@lws_storage.storage_registry'
+  Drupal\lws\Storage\StorageRegistryInterface: '@lws_storage.storage_registry'
+
+  lws_storage.access_check:
+    class: Drupal\lws_storage\Access\LwsAccessCheck
+    arguments: ['@Drupal\lws\Access\AccessDecisionInterface', '@lws_storage.storage_registry', '@lws.url_generator']
+    tags:
+      - { name: access_check, applies_to: _lws_access }
+
   lws_storage.param_converter:
     class: Drupal\lws_storage\ParamConverter\LwsStorageConverter
     arguments: ['@entity_type.manager']

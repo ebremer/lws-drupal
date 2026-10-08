@@ -3,6 +3,22 @@ services:
     parent: logger.channel_base
     arguments: ['lws']
 
+  cache.lws:
+    class: Drupal\Core\Cache\CacheBackendInterface
+    tags:
+      - { name: cache.bin }
+    factory: ['@cache_factory', 'get']
+    arguments: [lws]
+
+  lws.host_resolver:
+    class: Drupal\lws\Outbound\DnsHostResolver
+  Drupal\lws\Outbound\HostResolverInterface: '@lws.host_resolver'
+
+  lws.outbound_http:
+    class: Drupal\lws\Outbound\OutboundHttp
+    arguments: ['@http_client', '@lws.host_resolver', '@settings']
+  Drupal\lws\Outbound\OutboundHttp: '@lws.outbound_http'
+
   lws.url_parser:
     class: Drupal\lws\Routing\LwsUrlParser
     arguments: ['@config.factory']
@@ -31,6 +47,12 @@ services:
 
   lws.request_subscriber:
     class: Drupal\lws\EventSubscriber\LwsRequestSubscriber
+    arguments: ['@lws.url_parser']
+    tags:
+      - { name: event_subscriber }
+
+  lws.cors_subscriber:
+    class: Drupal\lws\EventSubscriber\LwsCorsSubscriber
     arguments: ['@lws.url_parser']
     tags:
       - { name: event_subscriber }

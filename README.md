@@ -7,30 +7,56 @@ is in [DESIGN.md](DESIGN.md).
 
 | Module | What it does |
 |---|---|
-| `lws` | The LWS URL space under `/lws`, problem details, content negotiation, settings |
+| `lws` | The LWS URL space under `/lws`, problem details, content negotiation, CORS, the guard on outbound requests, settings |
+| `lws_authz` | Access tokens: trusted authorization servers, token validation, the access decision |
 | `lws_storage` | Storages and their containers: the storage description, container listings, Drush commands |
 
 ## Status
 
-**Step S1, storages** (DESIGN.md §10). Storages are created with Drush, and each
-has a root container. Over HTTP:
+**Step A1, access tokens** (DESIGN.md §10), after S1, storages. Storages are
+created with Drush, and each has a root container. Over HTTP:
 
 | URL | Response |
 |---|---|
-| `/lws/{storage}/` | The storage description (`application/lws+cid`, or `ld+json`/`json` by `Accept`) |
-| `/lws/{storage}/root/…/` | A container listing (`application/lws+json`, or `ld+json`/`json`), with `ETag`, `Last-Modified` and `Link` headers |
+| `/lws/{storage}/` | The storage description (`application/lws+cid`, or `ld+json`/`json` by `Accept`), to anyone |
+| `/lws/{storage}/root/…/` | To the storage's controllers: a container listing (`application/lws+json`, or `ld+json`/`json`), with `ETag`, `Last-Modified` and `Link` headers |
+| No token, or a rejected one | `401` with a Bearer challenge: `as_uri` (the authorization server), `realm` (the storage) and, for a rejected token, `error` |
+| A valid token of anyone else | `403` |
 | An unknown storage, a missing resource | `404` |
-| A blocked storage | `503` |
+| A blocked storage, or one with no authorization server | `503` |
 | Anything malformed | `400` |
 
-Errors are RFC 9457 problem details. Everything is readable without a token, and
-nothing can be written over HTTP: data resources and writes come with step S2,
-token validation with step A1.
+Errors are RFC 9457 problem details. Nothing can be written over HTTP yet: data
+resources and writes come with step S2, and access for agents other than
+controllers with step A3.
 
 ```sh
+drush lws:as:add main https://as.example --default    # trust an authorization server
 drush lws:storage:create alice --controller=https://id.example/alice
 drush lws:storage:list
 drush lws:storage:delete alice
+```
+
+## Access tokens
+
+A storage accepts RFC 9068 access tokens (`typ: at+jwt`, signed with ES256,
+ES384 or EdDSA) from one trusted authorization server: its own, set with
+`lws:storage:create --authorization-server=<id>`, or the site's default. A token
+must name that server as `iss` and the storage URI, alone, as `aud` (LWS Core
+§5.2.4). Drupal does not issue tokens yet; that is step A2.
+
+Trusted servers are configuration, managed at *Configuration › Web services ›
+LWS authorization servers* or with `lws:as:add`, `lws:as:list` and
+`lws:as:delete`. A server's signing keys are either pinned (`--jwks=<file>`) or
+fetched from the `jwks_uri` of its metadata at `/.well-known/lws-configuration`,
+cached for an hour and fetched again when a token names an unknown key.
+
+Fetches go through a guard against server-side request forgery: HTTPS only, and
+never to private, loopback or link-local addresses. In development, origins can be
+exempted in `settings.php`:
+
+```php
+$settings['lws_outbound_allowlist'] = ['http://localhost:8080'];
 ```
 
 ## Requirements
@@ -62,7 +88,8 @@ ddev drush site:install minimal -y
 ddev drush en lws_storage -y
 ddev drush config:set lws.settings base_url https://lws-drupal.ddev.site -y
 ddev drush lws:storage:create alice
-curl -i https://lws-drupal.ddev.site/lws/alice/root/
+curl -i https://lws-drupal.ddev.site/lws/alice/         # the storage description
+curl -i https://lws-drupal.ddev.site/lws/alice/root/    # 401, until a server is trusted
 ```
 
 Checks, as CI runs them:
@@ -91,6 +118,8 @@ SIMPLETEST_DB=sqlite://localhost//tmp/lws-test.sqlite vendor/bin/phpunit -c web/
   Left empty, LWS URIs are derived from the request's `Host` header, which is
   only acceptable in development. The status report warns about it, and about
   serving LWS from the same host as the site's own pages.
+- **Trust an authorization server** and make it the default; until then, storage
+  requests that need a token answer `503`, and the status report says so.
 - **Configure the private file system.** Data resources will keep their content
   there (step S2); the status report warns until it is set.
 - **Web servers refuse some paths before Drupal sees them:**

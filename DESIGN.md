@@ -317,7 +317,9 @@ per project, and must not be exported with site config.
 
 The root container is not a field: it is the storage's resource with no parent, created in the
 same transaction as the storage. S1 implements `slug`, `label`, `controllers`, `owner`, `status`,
-`created` and `changed`; the other fields arrive with the steps that use them (A1, S2, S3).
+`created` and `changed`, and A1 adds `authorization_server` (empty for the site's default, which is
+`lws_authz.settings:authorization_server`); the other fields arrive with the steps that use them
+(S2, S3).
 
 **`lws_resource`** is a content entity, not revisionable in 1.0, and has no bundles.
 
@@ -444,12 +446,14 @@ LWS clients always read content through its LWS URL.
    the LWS prefix, and for any request with `Authorization: Bearer`. It works like `basic_auth`'s
    `DisallowBasicAuthRequests`. Without it, core's page cache would treat a bearer request as
    anonymous: it could serve a cached public response, or cache a private one.
-2. **Authentication** (priority 300). The `lws_bearer` provider from `lws_authz` *applies* only
-   under the LWS prefix to `Bearer` tokens that are JWTs with `typ: at+jwt` from a trusted issuer.
-   This lets it coexist with `simple_oauth`, which also claims `Bearer`. It never throws. It sets
-   an `LwsAccount` (an `AccountInterface` that carries the `RequestingAgent`), and puts a
-   `TokenValidationResult` in the request attribute `_lws_auth`. A failed validation is acted on
-   after routing, when the realm is known.
+2. **Authentication** (priority 300). The `lws_bearer` provider from `lws_authz` *applies* to
+   every request under the LWS prefix, with or without a token, and to nothing else. Claiming the
+   whole URL space keeps every other provider out of it: a session cookie never authenticates an
+   LWS request, and outside the prefix `Bearer` is left to `simple_oauth`. The provider never
+   throws. It looks the storage up through `StorageRegistryInterface`, validates any token against
+   the storage's authorization server and URI, and puts an `Authentication` (agent, RFC 6750 error,
+   realm, `as_uri`) in the request attribute `_lws_auth`. A valid token also makes the current user
+   an `LwsAccount`. A failed validation is acted on by the access check, after routing.
 3. **Path processing.** `LwsPathProcessor` maps the URL to an internal route path, and
    `LwsRouteEnhancer` gives the controller `$lws_target`
    ([§4.2](#42-routing-variable-depth-paths-in-drupal)). Malformed paths and `OPTIONS` were already
@@ -593,8 +597,8 @@ different one. Clients must not depend on it; `Accept-Patch` is the normative si
 
 1. **Structure.** The token is a compact JWS. The header has `typ` = `at+jwt` or
    `application/at+jwt` (RFC 9068 §4) and
-   `alg` from an allow-list (ES256, ES384, EdDSA, RS256, PS256). `none` and `HS*` are never
-   accepted.
+   `alg` from an allow-list (ES256, ES384, EdDSA; RS256 and PS256 once `lws-client` verifies RSA,
+   by A5). `none` and `HS*` are never accepted, and neither is a `crit` header.
 2. **Issuer.** `iss` must be the storage's configured AS: `local`, or a `lws_trusted_as` config
    entity.
 3. **Signature.** Verified with a key from that AS's `jwks_uri`. The metadata document is fetched
@@ -615,8 +619,8 @@ The result is a `RequestingAgent(sub, client_id, iss, jti)`. Failures map to `er
 `error_description` that leaks nothing.
 
 **Agent ↔ Drupal user ([D4]).** By default, LWS agents are *not* Drupal users. The `LwsAccount`
-has uid `0` and the role `lws_agent`. Drupal permissions play no part in LWS decisions; only the
-PDP does.
+is an anonymous Drupal session (uid `0`, role `anonymous`) that carries the `RequestingAgent`.
+Drupal permissions play no part in LWS decisions; only the PDP does.
 
 The optional add-on `lws_agent_users`
 ([§7.5](#75-lws_agent_users-lws-agents-as-drupal-users-optional-add-on)) maps agents to Drupal user
@@ -724,9 +728,12 @@ Drupal's Guzzle client with an SSRF guard:
 
 - HTTPS only, except for a dev allow-list;
 - private, loopback and link-local addresses refused after DNS resolution;
-- at most 3 redirects, each re-checked;
-- 256 KiB body cap and 5 s timeout;
-- responses cached by `Cache-Control`, with a ceiling.
+- cURL pinned to the checked addresses (`CURLOPT_RESOLVE`), on a fresh connection that is never
+  reused, so neither DNS rebinding nor a kept-alive connection can bypass the check;
+- at most 3 redirects, followed by hand and each re-checked;
+- 256 KiB body cap and 5 s timeout.
+
+Callers cache what they fetch: discovered keys for an hour, failures for a minute.
 
 **Config entities:**
 
@@ -963,8 +970,8 @@ Browser clients need CORS on every LWS route, the token endpoint and the metadat
 CORS for its own paths with a response subscriber and the `OPTIONS` routes:
 
 - methods: `GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS, QUERY`;
-- allowed headers include `Authorization`, `Content-Type`, `If-Match`, `If-None-Match`, `Link`,
-  `Slug`, `Prefer`, `Depth`, `Range`;
+- allowed headers include `Authorization`, `Content-Type`, `If-Match`, `If-None-Match`,
+  `If-Modified-Since`, `If-Unmodified-Since`, `Link`, `Slug`, `Prefer`, `Depth`, `Range`;
 - exposed headers: `Link`, `Location`, `ETag`, `Last-Modified`, `WWW-Authenticate`, `Allow`,
   `Accept-Patch`, `Accept-Query`, `Content-Range`, `Preference-Applied`, `Vary`;
 - no credentials (cookies are never used).
@@ -1082,12 +1089,12 @@ merge with passing tests; the build order is at the end of this section.
 - the page-cache request policy;
 - placeholder responses (`UrlSpaceController`), which S1 replaces.
 
+Since then, S1 added the settings form and `hook_requirements()`, and A1 the seams, the SSRF guard
+and the CORS subscriber. Q4 was decided for using `lws-client` directly, with no adapters.
+
 **Still to do in Step 0:**
 
-- the settings form and `hook_requirements()`;
-- the seams, `Preconditions` and `PaginationCursor`;
-- the SSRF guard and the CORS subscriber;
-- the `lws-client` adapters, which wait on Q4;
+- `Preconditions` and `PaginationCursor`;
 - the MySQL and PostgreSQL CI matrix.
 
 ### Storage module steps
@@ -1209,6 +1216,40 @@ merge with passing tests; the build order is at the end of this section.
   - the server accepts tokens from the Java `lws-server`'s AS when that AS is configured as
     trusted;
   - Touchstone can run with `HarnessIssuedTokens`.
+
+**Done.** Differences from the plan above:
+
+- **Built differently:**
+  - the provider claims the whole LWS URL space, not only `at+jwt` tokens from trusted issuers
+    (see [§5.4](#54-request-pipeline));
+  - each storage trusts one authorization server: its own `authorization_server`, or the site's
+    default. The token's `iss` must be that server, so a server trusted for one storage cannot
+    mint tokens for another;
+  - a storage whose server is missing answers `503` where a `401` challenge would have no
+    `as_uri` to send the client to;
+  - `LwsAccount` is an anonymous session that carries the agent; there is no `lws_agent` role.
+- **Left out:**
+  - public read. Every storage is private until A3, where public access is an access policy with
+    `foaf:Agent` as assignee. A storage-wide flag now would be a mode to remove later;
+  - RS256 and PS256, which wait for RSA verification in `lws-client` (by A5).
+- **More was built:** an admin UI for trusted servers (list, add, edit, delete, a "default"
+  checkbox), the `lws:as:add`, `lws:as:list` and `lws:as:delete` Drush commands, and a status
+  report entry for the default server.
+- **Exit criteria:**
+  - the token fault matrix runs as kernel tests through the HTTP kernel, mirroring Touchstone's
+    `core/storage_authorization` faults;
+  - **`lws-server`'s AS cannot issue tokens for another storage:** its token endpoint refuses any
+    `resource` but its own storage (`invalid_target`). So the server was checked against
+    `lws-server` as Touchstone's `HarnessIssuedTokens` would: Drupal trusted `lws-server`'s issuer
+    and discovered its keys from its metadata, and tokens signed with `lws-server`'s own key were
+    accepted. Restarting `lws-server` with a new key showed rotation: the new key's tokens were
+    accepted after one refresh, the old key's refused. Minting for other storages would need a
+    change to `lws-server`;
+  - **Touchstone waits for S2:** it provisions its test containers with `POST`.
+- **Verified:** 203 tests; and through Apache with curl, the PHP LWS client (with
+  `BearerTokenAuthenticator`) and a live `lws-server`. The SSRF guard was checked with Drupal's
+  real cURL client: an HTTPS fetch, the size cap, loopback refusal, and the pin (a fetch pinned to
+  another address connects there and fails the certificate check).
 
 **A2. Embedded authorization server: metadata, keys, token exchange and the SSI-CID suite.**
 

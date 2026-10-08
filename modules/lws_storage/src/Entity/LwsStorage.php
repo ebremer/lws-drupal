@@ -85,6 +85,12 @@ class LwsStorage extends ContentEntityBase implements LwsStorageInterface {
       ->setDescription(new TranslatableMarkup('The Drupal user who administers the storage.'))
       ->setSetting('target_type', 'user');
 
+    $fields['authorization_server'] = BaseFieldDefinition::create('string')
+      ->setLabel(new TranslatableMarkup('Authorization server'))
+      ->setDescription(new TranslatableMarkup('The trusted authorization server whose access tokens the storage accepts, by ID. Empty for the site default.'))
+      ->setSetting('max_length', 64)
+      ->setSetting('is_ascii', TRUE);
+
     $fields['status'] = BaseFieldDefinition::create('boolean')
       ->setLabel(new TranslatableMarkup('Enabled'))
       ->setDefaultValue(TRUE);
@@ -118,6 +124,14 @@ class LwsStorage extends ContentEntityBase implements LwsStorageInterface {
   public function getOwnerId(): ?int {
     $owner = $this->get('owner');
     return $owner->isEmpty() ? NULL : (int) $owner->target_id;
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function getAuthorizationServerId(): ?string {
+    $id = $this->get('authorization_server')->value;
+    return $id === NULL || $id === '' ? NULL : (string) $id;
   }
 
   /**

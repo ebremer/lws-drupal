@@ -1,0 +1,27 @@
+lws_authz.settings:
+  type: config_object
+  label: 'LWS authorization settings'
+  mapping:
+    authorization_server:
+      type: string
+      label: 'The trusted authorization server of storages that name none, by ID. Empty for none.'
+    clock_skew:
+      type: integer
+      label: 'The clock skew allowed when checking the times in an access token, in seconds.'
+
+lws_authz.trusted_as.*:
+  type: config_entity
+  label: 'Trusted authorization server'
+  mapping:
+    id:
+      type: machine_name
+      label: 'ID'
+    label:
+      type: required_label
+      label: 'Label'
+    issuer:
+      type: uri
+      label: 'Issuer identifier: the "iss" of its tokens and the "as_uri" of challenges.'
+    jwks:
+      type: string
+      label: 'Pinned JSON Web Key Set. Empty to fetch the keys from the jwks_uri of its metadata.'

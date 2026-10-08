@@ -34,16 +34,23 @@ final class StorageManager {
    *   Agent URIs with full control of the storage.
    * @param int|null $ownerId
    *   The Drupal user who administers the storage.
+   * @param string|null $authorizationServer
+   *   The trusted authorization server whose tokens it accepts, by ID; NULL
+   *   for the site's default.
    *
    * @throws \InvalidArgumentException
    *   When the storage would be invalid, for example a taken or malformed slug.
    */
-  public function createStorage(string $slug, string $label, array $controllers = [], ?int $ownerId = NULL): LwsStorageInterface {
+  public function createStorage(string $slug, string $label, array $controllers = [], ?int $ownerId = NULL, ?string $authorizationServer = NULL): LwsStorageInterface {
+    if ($authorizationServer !== NULL && $this->entityTypeManager->getStorage('lws_trusted_as')->load($authorizationServer) === NULL) {
+      throw new \InvalidArgumentException(sprintf('There is no trusted authorization server %s.', $authorizationServer));
+    }
     $storage = $this->entityTypeManager->getStorage('lws_storage')->create([
       'slug' => $slug,
       'label' => $label,
       'controllers' => $controllers,
       'owner' => $ownerId,
+      'authorization_server' => $authorizationServer,
     ]);
     assert($storage instanceof LwsStorageInterface);
     $violations = $storage->validate();

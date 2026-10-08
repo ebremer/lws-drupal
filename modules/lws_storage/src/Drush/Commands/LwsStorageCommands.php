@@ -43,13 +43,18 @@ final class LwsStorageCommands extends DrushCommands {
   #[CLI\Option(name: 'label', description: 'A human-readable name; defaults to the slug.')]
   #[CLI\Option(name: 'controller', description: 'The URI of an agent with full control of the storage. Repeat for several.')]
   #[CLI\Option(name: 'owner', description: 'The ID of the Drupal user who administers the storage.')]
+  #[CLI\Option(name: 'authorization-server', description: 'The ID of the trusted authorization server whose tokens it accepts; defaults to the site default (see lws:as:list).')]
   #[CLI\Usage(name: 'drush lws:storage:create alice --controller=https://id.example/alice', description: 'Creates the storage /lws/alice/ controlled by that agent.')]
-  public function createStorage(string $slug, array $options = ['label' => NULL, 'controller' => [], 'owner' => NULL]): void {
+  public function createStorage(
+    string $slug,
+    array $options = ['label' => NULL, 'controller' => [], 'owner' => NULL, 'authorization-server' => NULL],
+  ): void {
     $storage = $this->storages->createStorage(
       $slug,
       (string) ($options['label'] ?? $slug),
       array_values(array_map('strval', (array) $options['controller'])),
       $options['owner'] === NULL ? NULL : (int) $options['owner'],
+      $options['authorization-server'] === NULL ? NULL : (string) $options['authorization-server'],
     );
     $this->logger()?->success(dt('Created storage @slug at @uri', [
       '@slug' => $storage->getSlug(),
@@ -69,9 +74,10 @@ final class LwsStorageCommands extends DrushCommands {
     'label' => 'Label',
     'uri' => 'Storage URI',
     'controllers' => 'Controllers',
+    'authorization_server' => 'Authorization server',
     'status' => 'Status',
   ])]
-  #[CLI\DefaultTableFields(fields: ['slug', 'uri', 'controllers', 'status'])]
+  #[CLI\DefaultTableFields(fields: ['slug', 'uri', 'controllers', 'authorization_server', 'status'])]
   public function listStorages(array $options = ['format' => 'table']): RowsOfFields {
     $rows = [];
     foreach ($this->entityTypeManager->getStorage('lws_storage')->loadMultiple() as $storage) {
@@ -81,6 +87,7 @@ final class LwsStorageCommands extends DrushCommands {
           'label' => $storage->label(),
           'uri' => $this->urls->storageUri($storage->getSlug()),
           'controllers' => implode(', ', $storage->getControllers()),
+          'authorization_server' => $storage->getAuthorizationServerId() ?? '(default)',
           'status' => $storage->isEnabled() ? 'enabled' : 'blocked',
         ];
       }

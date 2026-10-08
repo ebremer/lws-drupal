@@ -1,7 +1,8 @@
 # Internal routes of the LWS URL space; see lws.routing.yml. LwsRouteEnhancer
 # supplies $lws_target and the storage slug, which the lws_storage parameter
 # converter turns into the storage entity (404 if there is none, 503 if it is
-# blocked).
+# blocked). Access is the "_lws_access" check (LwsAccessCheck), after the
+# lws_bearer provider of lws_authz has validated any access token.
 
 lws_storage.description:
   path: '/_lws/description'
@@ -11,7 +12,7 @@ lws_storage.description:
   requirements:
     # The storage description is public: clients read it to find the storage
     # root and the services before they have a token (LWS Core §6.1).
-    _access: 'TRUE'
+    _lws_access: 'public'
   options:
     _lws: TRUE
     _auth: ['lws_bearer']
@@ -26,9 +27,7 @@ lws_storage.resource:
     _controller: '\Drupal\lws_storage\Controller\ResourceController::read'
   methods: [GET, HEAD]
   requirements:
-    # Open until step A1 adds token validation and the access policy; until
-    # then only containers exist, and they can only be created with Drush.
-    _access: 'TRUE'
+    _lws_access: 'resource'
   options:
     _lws: TRUE
     _auth: ['lws_bearer']
