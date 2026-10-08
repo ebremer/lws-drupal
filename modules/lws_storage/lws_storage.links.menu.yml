@@ -1,0 +1,5 @@
+entity.lws_storage.collection:
+  title: 'LWS storages'
+  description: 'Linked Web Storage storages, and who may access them.'
+  route_name: entity.lws_storage.collection
+  parent: system.admin_content

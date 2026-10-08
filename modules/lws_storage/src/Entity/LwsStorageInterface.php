@@ -54,6 +54,11 @@ interface LwsStorageInterface extends ContentEntityInterface, EntityChangedInter
   public function getPageSize(): ?int;
 
   /**
+   * Whether changes must be conditional on If-Match; NULL for the site default.
+   */
+  public function requiresIfMatch(): ?bool;
+
+  /**
    * Whether the storage serves requests; a blocked storage answers 503.
    */
   public function isEnabled(): bool;

@@ -8,6 +8,7 @@ use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\File\FileSystemInterface;
 use Drupal\Core\StreamWrapper\StreamWrapperManagerInterface;
 use Drupal\lws\Http\LwsHttpException;
+use Drupal\lws\Http\RequestBody;
 
 /**
  * Writes the content of data resources to the file system (DESIGN.md §5.3).
@@ -67,17 +68,40 @@ final class ContentStore {
   /**
    * Writes a body to a new file.
    *
-   * @param resource $body
+   * A body that is too large is refused before any of it is read when its
+   * length is known, and as soon as it outgrows the limits otherwise.
+   *
+   * @param resource|\Drupal\lws\Http\RequestBody $body
    *   The body, as a readable stream.
    * @param string $storageUuid
    *   The UUID of the storage.
    * @param string $resourceUuid
    *   The UUID of the resource.
+   * @param int|null $room
+   *   The bytes the storage's quota leaves room for; NULL for no quota. The
+   *   quota is charged later, in the transaction that keeps the content: this
+   *   only spares writing what could never be kept.
    *
    * @throws \Drupal\lws\Http\LwsHttpException
-   *   413 when the body is too large; 503 when the content cannot be stored.
+   *   413 when the body is too large; 507 when it cannot fit in the quota;
+   *   400 when it ends before its Content-Length; 503 when the content cannot
+   *   be stored.
    */
-  public function write($body, string $storageUuid, string $resourceUuid): StoredContent {
+  public function write($body, string $storageUuid, string $resourceUuid, ?int $room = NULL): StoredContent {
+    $request = NULL;
+    if ($body instanceof RequestBody) {
+      $request = $body;
+      $body = $body->stream;
+    }
+    $limit = $this->maxBytes();
+    if ($request?->length !== NULL) {
+      if ($limit > 0 && $request->length > $limit) {
+        throw LwsHttpException::contentTooLarge($limit);
+      }
+      if ($room !== NULL && $request->length > $room) {
+        throw LwsHttpException::insufficientStorage();
+      }
+    }
     if (!$this->isAvailable()) {
       throw LwsHttpException::serviceUnavailable('The file system that holds content is not configured.');
     }
@@ -91,7 +115,6 @@ final class ContentStore {
       throw LwsHttpException::serviceUnavailable('Content cannot be stored.');
     }
 
-    $limit = $this->maxBytes();
     $hash = hash_init('sha256');
     $size = 0;
     try {
@@ -104,11 +127,15 @@ final class ContentStore {
         if ($limit > 0 && $size > $limit) {
           throw LwsHttpException::contentTooLarge($limit);
         }
+        if ($room !== NULL && $size > $room) {
+          throw LwsHttpException::insufficientStorage();
+        }
         hash_update($hash, $chunk);
         if ($chunk !== '' && fwrite($out, $chunk) !== strlen($chunk)) {
           throw LwsHttpException::serviceUnavailable('Content cannot be stored.');
         }
       }
+      $request?->checkLength($size);
     }
     catch (\Throwable $e) {
       fclose($out);

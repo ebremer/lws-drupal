@@ -25,6 +25,9 @@ final class ContainerPage {
    *   The cursor of the previous page.
    * @param string|null $last
    *   The cursor of the last page.
+   * @param bool $filtered
+   *   Whether members the agent may not see were left out, so that the page
+   *   is the agent's own: its entity tag must not be the container's.
    */
   public function __construct(
     public readonly array $members,
@@ -32,6 +35,7 @@ final class ContainerPage {
     public readonly ?string $next = NULL,
     public readonly ?string $prev = NULL,
     public readonly ?string $last = NULL,
+    public readonly bool $filtered = FALSE,
   ) {}
 
 }

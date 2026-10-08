@@ -119,7 +119,10 @@ final class PolicyEvaluatorTest extends UnitTestCase {
       // Target, resource, whether the target covers it.
       'itself (data)' => [self::ROOT . 'shared/a.txt', 'shared/a.txt', TRUE],
       'itself (container)' => [self::ROOT . 'shared/', 'shared/', TRUE],
-      'the container without its slash' => [self::ROOT . 'shared', 'shared/', TRUE],
+      // "shared" and "shared/" are two resources, which may both exist.
+      'a data resource named as the container' => [self::ROOT . 'shared', 'shared/', FALSE],
+      'a data resource named as a container above' => [self::ROOT . 'shared', 'shared/deep/b.txt', FALSE],
+      'a container named as the data resource' => [self::ROOT . 'notes/', 'notes', FALSE],
       'below the container' => [self::ROOT . 'shared/', 'shared/deep/b.txt', TRUE],
       'below, a container' => [self::ROOT . 'shared/', 'shared/deep/', TRUE],
       'the storage' => [self::STORAGE, 'other/c.txt', TRUE],

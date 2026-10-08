@@ -166,10 +166,10 @@ final class PaginationTest extends LwsStorageKernelTestBase {
     $this->create(...range('a', 'g'));
     $next = (string) $this->page(self::ROOT)->next;
     [, $cursor] = explode('?page=', $next);
-    [$payload, $signature] = explode('.', $cursor);
-
-    $forged = rtrim(strtr(base64_encode('{"a":"b"}'), '+/', '-_'), '=') . '.' . $signature;
-    foreach (['', 'abc', $payload, $forged, $cursor . 'x'] as $bad) {
+    $bytes = (string) base64_decode(strtr($cursor, '-_', '+/'));
+    $altered = rtrim(strtr(base64_encode($bytes ^ str_pad("\1", strlen($bytes), "\0", STR_PAD_LEFT)), '+/', '-_'), '=');
+    $forged = rtrim(strtr(base64_encode('{"a":"b"}'), '+/', '-_'), '=');
+    foreach (['', 'abc', substr($cursor, 0, 30), $altered, $forged, $cursor . 'x', $cursor . '.x'] as $bad) {
       $this->assertProblem($this->send('GET', '/lws/alice/root/?page=' . $bad), 404, self::ROOT);
     }
 

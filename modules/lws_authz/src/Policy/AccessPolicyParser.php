@@ -85,7 +85,7 @@ final class AccessPolicyParser {
     if ($values === NULL || $values === []) {
       throw new InvalidPolicyException('The target\'s "value" must list the resources it applies to.');
     }
-    $values = array_map(fn (string $value): string => $this->canonical($value, $storage), $values);
+    $values = array_map(fn (string $value): string => $this->canonical($value, $storage, $targetType === ResourceType::CONTAINER), $values);
 
     $constraints = [];
     $list = $policy['constraint'] ?? [];
@@ -108,9 +108,13 @@ final class AccessPolicyParser {
   /**
    * The canonical form of a target URI, which must be in the storage.
    *
+   * A URI names one resource: "notes" and "notes/" are two, which may both
+   * exist. Only a policy that applies to containers alone may name one
+   * without its slash, as it can mean nothing else.
+   *
    * @throws \Drupal\lws_authz\Policy\InvalidPolicyException
    */
-  private function canonical(string $uri, StorageRef $storage): string {
+  private function canonical(string $uri, StorageRef $storage, bool $container): string {
     $base = $this->urls->baseUrl();
     $parts = parse_url($uri);
     if (!str_starts_with($uri, $base . '/') || $parts === FALSE || isset($parts['query']) || isset($parts['fragment'])) {
@@ -122,6 +126,9 @@ final class AccessPolicyParser {
     $target = $this->parser->parse($path);
     if ($target !== NULL && $target->area !== LwsArea::Description && $target->area !== LwsArea::Resource) {
       $target = str_ends_with($path, '/') ? NULL : $this->parser->parse($path . '/');
+    }
+    elseif ($container && $target !== NULL && $target->area === LwsArea::Resource && !str_ends_with($path, '/')) {
+      $target = $this->parser->parse($path . '/');
     }
     $inStorage = $target !== NULL && $target->storage === $storage->slug
       && ($target->area === LwsArea::Description || $target->area === LwsArea::Resource);

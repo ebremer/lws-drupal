@@ -14,8 +14,9 @@ use Drupal\Core\StringTranslation\TranslatableMarkup;
 use Drupal\file\FileInterface;
 use Drupal\lws\Http\LwsResponse;
 use Drupal\lws_storage\Linkset\UserMetadata;
+use Drupal\lws_storage\LwsResourceListBuilder;
 use Drupal\lws_storage\LwsResourceStorageSchema;
-use Drupal\views\EntityViewsData;
+use Drupal\lws_storage\Views\LwsResourceViewsData;
 
 /**
  * A container or data resource.
@@ -36,7 +37,8 @@ use Drupal\views\EntityViewsData;
   ],
   handlers: [
     'storage_schema' => LwsResourceStorageSchema::class,
-    'views_data' => EntityViewsData::class,
+    'views_data' => LwsResourceViewsData::class,
+    'list_builder' => LwsResourceListBuilder::class,
   ],
   admin_permission: 'administer lws storages',
   base_table: 'lws_resource',
@@ -75,7 +77,7 @@ class LwsResource extends ContentEntityBase implements LwsResourceInterface {
     $fields['path'] = BaseFieldDefinition::create('string')
       ->setLabel(new TranslatableMarkup('Path'))
       ->setDescription(new TranslatableMarkup('The decoded path below the storage URI.'))
-      ->setSetting('max_length', 2048)
+      ->setSetting('max_length', self::MAX_PATH_LENGTH)
       ->setSetting('case_sensitive', TRUE);
 
     // MySQL cannot index all of a 2048-character path; lookups go through

@@ -44,6 +44,27 @@ final class Linksets {
    */
   private const STRING_ATTRIBUTES = ['media', 'title', 'type'];
 
+  /**
+   * The most types a client may give a resource.
+   *
+   * They are sent in a Link header with every response about it, which
+   * proxies limit.
+   */
+  public const MAX_TYPES = 32;
+
+  /**
+   * The longest link target, in bytes.
+   */
+  public const MAX_HREF_BYTES = 2048;
+
+  /**
+   * An absolute URI (RFC 3986 §4.3).
+   *
+   * It has nothing a Link header would need to escape, such as ">", quotes,
+   * spaces or control characters.
+   */
+  private const ABSOLUTE_URI = '/^[A-Za-z][A-Za-z0-9+.-]*:[A-Za-z0-9\-._~:\/?#\[\]@!$&\'()*+,;=%]+$/';
+
   public function __construct(
     private readonly ResourceLinks $links,
   ) {}
@@ -102,12 +123,12 @@ final class Linksets {
         continue;
       }
       if ($link->rel === LinkRelation::TYPE) {
-        if (!str_starts_with($link->href, Vocabulary::LWS_NS)) {
+        if (!self::isLws($link->href)) {
           $types[] = $link->href;
         }
         continue;
       }
-      if (in_array($link->rel, self::SERVER_MANAGED, TRUE)) {
+      if (self::isServerManaged($link->rel)) {
         continue;
       }
       $target = self::target($link);
@@ -115,7 +136,7 @@ final class Linksets {
         $targets[$link->rel][] = $target;
       }
     }
-    return new UserMetadata(array_values(array_unique($types)), $targets);
+    return new UserMetadata(self::limitTypes($types), $targets);
   }
 
   /**
@@ -163,7 +184,7 @@ final class Linksets {
       $hrefs = array_column($targets, 'href');
       if ($rel === LinkRelation::TYPE) {
         foreach ($hrefs as $href) {
-          if (!str_starts_with($href, Vocabulary::LWS_NS)) {
+          if (!self::isLws($href)) {
             $types[] = $href;
           }
           elseif ($href === $class) {
@@ -174,7 +195,7 @@ final class Linksets {
           }
         }
       }
-      elseif (in_array($rel, self::SERVER_MANAGED, TRUE)) {
+      elseif (self::isServerManaged($rel)) {
         if ($rel !== LinkRelation::UP || $hrefs !== [$up]) {
           throw LwsHttpException::conflict(sprintf('The "%s" relation is server-managed and cannot be changed.', $rel));
         }
@@ -187,7 +208,7 @@ final class Linksets {
     if ($complete && (!$sawClass || ($up !== NULL && !$sawUp))) {
       throw LwsHttpException::conflict('The "up" relation and the LWS class among the types are server-managed and cannot be removed.');
     }
-    return new UserMetadata(array_values(array_unique($types)), $links);
+    return new UserMetadata(self::limitTypes($types), $links);
   }
 
   /**
@@ -247,10 +268,50 @@ final class Linksets {
   }
 
   /**
-   * Whether a value is an absolute URI.
+   * Whether a value is an absolute URI that can be sent as it is.
    */
-  private static function isUri(string $value): bool {
-    return preg_match('/^[A-Za-z][A-Za-z0-9+.-]*:\S+$/', $value) === 1;
+  public static function isUri(string $value): bool {
+    return strlen($value) <= self::MAX_HREF_BYTES && preg_match(self::ABSOLUTE_URI, $value) === 1;
+  }
+
+  /**
+   * Whether a URI is in the LWS namespace, in any case.
+   *
+   * Its scheme and host are case-insensitive, so a type that differs only in
+   * case may be taken for an LWS class.
+   */
+  private static function isLws(string $uri): bool {
+    return stripos($uri, Vocabulary::LWS_NS) === 0;
+  }
+
+  /**
+   * Whether a relation is one only the server sets.
+   *
+   * Relation types compare case-insensitively (RFC 8288 §2.1), extension
+   * relations too.
+   */
+  private static function isServerManaged(string $rel): bool {
+    return in_array(strtolower($rel), array_map('strtolower', self::SERVER_MANAGED), TRUE);
+  }
+
+  /**
+   * The distinct types, if there are not too many.
+   *
+   * @param list<string> $types
+   *   The types.
+   *
+   * @return list<string>
+   *   The distinct types.
+   *
+   * @throws \Drupal\lws\Http\LwsHttpException
+   *   422 for more than MAX_TYPES.
+   */
+  private static function limitTypes(array $types): array {
+    $types = array_values(array_unique($types));
+    if (count($types) > self::MAX_TYPES) {
+      throw LwsHttpException::unprocessable(sprintf('A resource may have at most %d types.', self::MAX_TYPES));
+    }
+    return $types;
   }
 
 }

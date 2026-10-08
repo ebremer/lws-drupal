@@ -1,0 +1,26 @@
+<?php
+
+/**
+ * @file
+ * Install and update functions for LWS Storage.
+ */
+
+declare(strict_types=1);
+
+use Drupal\Core\Field\BaseFieldDefinition;
+use Drupal\Core\StringTranslation\TranslatableMarkup;
+
+/**
+ * Lets each storage require If-Match, or not (step S5).
+ */
+function lws_storage_update_11001(): string {
+  $updates = \Drupal::entityDefinitionUpdateManager();
+  if ($updates->getFieldStorageDefinition('require_if_match', 'lws_storage') !== NULL) {
+    return 'Storages could already require If-Match.';
+  }
+  $field = BaseFieldDefinition::create('boolean')
+    ->setLabel(new TranslatableMarkup('Require If-Match'))
+    ->setDescription(new TranslatableMarkup('Whether changes must be conditional on If-Match. Empty for the site default.'));
+  $updates->installFieldStorageDefinition('require_if_match', 'lws_storage', 'lws_storage', $field);
+  return 'Storages can now require If-Match, or not, whatever the site default.';
+}

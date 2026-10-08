@@ -10,3 +10,9 @@ services:
     class: Drupal\lws_storage_test\Access\PartialReader
     decorates: lws_authz.access_decision
     arguments: ['@lws_storage_test.access_decision.inner']
+
+  # Private files whose streams cannot seek, as remote ones may not.
+  lws_storage_test.stream_wrapper.noseek:
+    class: Drupal\lws_storage_test\StreamWrapper\NoSeekStream
+    tags:
+      - { name: stream_wrapper, scheme: noseek }

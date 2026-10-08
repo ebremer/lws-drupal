@@ -266,6 +266,19 @@ final class ResourceOperationsTest extends LwsStorageKernelTestBase {
   }
 
   /**
+   * Tests byte ranges of content in a stream that cannot seek.
+   */
+  public function testRangesWithoutSeeking(): void {
+    $this->config('lws_storage.settings')->set('scheme', 'noseek')->save();
+    $uri = $this->path($this->post('/lws/alice/root/', '0123456789', ['Slug' => 'digits.txt']));
+    $this->assertStringStartsWith('noseek://lws/', (string) $this->resource(self::BASE . $uri)?->getContentFile()?->getFileUri());
+    $this->assertSame('345', $this->body($this->send('GET', $uri, ['Range' => 'bytes=3-5'])));
+    $this->assertSame('89', $this->body($this->send('GET', $uri, ['Range' => 'bytes=-2'])));
+    $this->assertSame('56789', $this->body($this->send('GET', $uri, ['Range' => 'bytes=5-'])));
+    $this->assertSame('0123456789', $this->body($this->send('GET', $uri)));
+  }
+
+  /**
    * Tests conditional reads of data resources and containers.
    */
   public function testConditionalReads(): void {

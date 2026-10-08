@@ -195,24 +195,71 @@ final class ResourceRepository {
    *   The resources, deepest first.
    */
   public function descendants(LwsResourceInterface $container, bool $lock = FALSE): array {
+    $paths = $this->descendantPaths($container, $lock);
+    uasort($paths, static fn (string $a, string $b): int => substr_count($b, '/') <=> substr_count($a, '/') ?: strcmp($b, $a));
+    $resources = $this->storage()->loadMultiple(array_keys($paths));
+    return array_values(array_filter($resources, static fn ($resource): bool => $resource instanceof LwsResourceInterface));
+  }
+
+  /**
+   * Whether a container has any member.
+   */
+  public function hasMembers(LwsResourceInterface $container): bool {
+    return $this->database->select('lws_resource', 'r')
+      ->fields('r', ['id'])
+      ->condition('parent', $container->id())
+      ->range(0, 1)
+      ->execute()
+      ?->fetchField() !== FALSE;
+  }
+
+  /**
+   * How many resources are below a container, counting no further than a cap.
+   *
+   * Nothing is loaded or locked, so a container too large to delete costs
+   * little to refuse.
+   *
+   * @return int
+   *   The number of descendants, or the cap if there are more.
+   */
+  public function countDescendants(LwsResourceInterface $container, int $cap): int {
+    return min($cap, count($this->descendantPaths($container, FALSE, $cap)));
+  }
+
+  /**
+   * The paths of the resources below a container, by ID.
+   *
+   * @param \Drupal\lws_storage\Entity\LwsResourceInterface $container
+   *   The container.
+   * @param bool $lock
+   *   Whether to lock their rows, inside a transaction, until it ends.
+   * @param int|null $cap
+   *   Stop after this many rows; NULL for all.
+   *
+   * @return array<int, string>
+   *   The paths.
+   */
+  private function descendantPaths(LwsResourceInterface $container, bool $lock, ?int $cap = NULL): array {
     $prefix = $container->getPath();
     $query = $this->database->select('lws_resource', 'r')
       ->fields('r', ['id', 'path'])
       ->condition('storage', $container->getLwsStorageId())
       ->condition('path', $this->database->escapeLike($prefix) . '_%', 'LIKE');
+    if ($cap !== NULL) {
+      $query->range(0, $cap);
+    }
     if ($lock) {
       $query->forUpdate();
     }
     $paths = [];
     foreach ($query->execute() ?? [] as $row) {
-      // LIKE may ignore case; paths are case-sensitive.
+      // LIKE may ignore case; paths are case-sensitive. Rows that differ in
+      // case may make a capped count too low, never too high.
       if (str_starts_with((string) $row->path, $prefix)) {
         $paths[(int) $row->id] = (string) $row->path;
       }
     }
-    uasort($paths, static fn (string $a, string $b): int => substr_count($b, '/') <=> substr_count($a, '/') ?: strcmp($b, $a));
-    $resources = $this->storage()->loadMultiple(array_keys($paths));
-    return array_values(array_filter($resources, static fn ($resource): bool => $resource instanceof LwsResourceInterface));
+    return $paths;
   }
 
   /**

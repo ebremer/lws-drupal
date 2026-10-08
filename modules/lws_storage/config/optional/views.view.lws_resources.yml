@@ -1,0 +1,279 @@
+langcode: en
+status: true
+dependencies:
+  module:
+    - file
+    - lws_storage
+    - user
+id: lws_resources
+label: 'LWS resources'
+module: views
+description: 'The resource browser of an LWS storage, at /admin/content/lws/{storage}/resources. Its argument is the storage ID.'
+tag: ''
+base_table: lws_resource
+base_field: id
+display:
+  default:
+    id: default
+    display_title: Default
+    display_plugin: default
+    position: 0
+    display_options:
+      title: Resources
+      fields:
+        path:
+          id: path
+          table: lws_resource
+          field: path
+          relationship: none
+          entity_type: lws_resource
+          entity_field: path
+          plugin_id: field
+          label: Path
+          type: string
+          settings:
+            link_to_entity: false
+        kind:
+          id: kind
+          table: lws_resource
+          field: kind
+          relationship: none
+          entity_type: lws_resource
+          entity_field: kind
+          plugin_id: field
+          label: Kind
+          type: string
+          settings:
+            link_to_entity: false
+        filemime:
+          id: filemime
+          table: file_managed
+          field: filemime
+          relationship: content__target_id
+          entity_type: file
+          entity_field: filemime
+          plugin_id: field
+          label: 'Media type'
+          type: string
+          settings:
+            link_to_entity: false
+        filesize:
+          id: filesize
+          table: file_managed
+          field: filesize
+          relationship: content__target_id
+          entity_type: file
+          entity_field: filesize
+          plugin_id: field
+          label: Size
+          type: file_size
+          settings: {  }
+        creator:
+          id: creator
+          table: lws_resource
+          field: creator
+          relationship: none
+          entity_type: lws_resource
+          entity_field: creator
+          plugin_id: field
+          label: 'Created by'
+          type: string
+          settings:
+            link_to_entity: false
+        changed:
+          id: changed
+          table: lws_resource
+          field: changed
+          relationship: none
+          entity_type: lws_resource
+          entity_field: changed
+          plugin_id: field
+          label: Changed
+          type: timestamp
+          settings:
+            date_format: short
+            custom_date_format: ''
+            timezone: ''
+        operations:
+          id: operations
+          table: lws_resource
+          field: operations
+          relationship: none
+          entity_type: lws_resource
+          plugin_id: entity_operations
+          label: Operations
+          destination: true
+      pager:
+        type: full
+        options:
+          items_per_page: 50
+          offset: 0
+      exposed_form:
+        type: basic
+        options:
+          submit_button: Filter
+          reset_button: true
+          reset_button_label: Reset
+          exposed_sorts_label: 'Sort by'
+          expose_sort_order: true
+          sort_asc_label: Asc
+          sort_desc_label: Desc
+      access:
+        type: perm
+        options:
+          perm: 'administer lws storages'
+      cache:
+        type: tag
+        options: {  }
+      empty:
+        area_text_custom:
+          id: area_text_custom
+          table: views
+          field: area_text_custom
+          relationship: none
+          plugin_id: text_custom
+          empty: true
+          content: 'No resources match.'
+      sorts:
+        path:
+          id: path
+          table: lws_resource
+          field: path
+          relationship: none
+          entity_type: lws_resource
+          entity_field: path
+          plugin_id: standard
+          order: ASC
+          exposed: false
+      arguments:
+        storage:
+          id: storage
+          table: lws_resource
+          field: storage
+          relationship: none
+          entity_type: lws_resource
+          entity_field: storage
+          plugin_id: entity_target_id
+          target_entity_type_id: lws_storage
+          default_action: 'not found'
+          specify_validation: true
+          validate:
+            type: 'entity:lws_storage'
+            fail: 'not found'
+          validate_options:
+            access: false
+            operation: view
+            multiple: 0
+            bundles: {  }
+          break_phrase: false
+          not: false
+      filters:
+        path:
+          id: path
+          table: lws_resource
+          field: path
+          relationship: none
+          entity_type: lws_resource
+          entity_field: path
+          plugin_id: string
+          operator: starts
+          value: ''
+          exposed: true
+          expose:
+            operator_id: path_op
+            label: 'Path begins with'
+            description: 'Such as <em>photos/</em> for the container photos/ and everything in it.'
+            use_operator: false
+            operator: path_op
+            identifier: path
+            required: false
+            remember: false
+            multiple: false
+            remember_roles:
+              authenticated: authenticated
+        kind:
+          id: kind
+          table: lws_resource
+          field: kind
+          relationship: none
+          entity_type: lws_resource
+          entity_field: kind
+          plugin_id: string
+          operator: '='
+          value: ''
+          exposed: true
+          expose:
+            operator_id: kind_op
+            label: 'Kind'
+            description: '<em>container</em> or <em>data</em>.'
+            use_operator: false
+            operator: kind_op
+            identifier: kind
+            required: false
+            remember: false
+            multiple: false
+            remember_roles:
+              authenticated: authenticated
+      style:
+        type: table
+        options:
+          grouping: {  }
+          row_class: ''
+          default_row_class: true
+          columns:
+            path: path
+            kind: kind
+            filemime: filemime
+            filesize: filesize
+            creator: creator
+            changed: changed
+            operations: operations
+          default: '-1'
+          info:
+            path:
+              sortable: false
+            kind:
+              sortable: false
+            filemime:
+              sortable: false
+            filesize:
+              sortable: false
+            creator:
+              sortable: false
+              responsive: priority-low
+            changed:
+              sortable: false
+              responsive: priority-low
+            operations:
+              sortable: false
+          override: true
+          sticky: false
+          summary: ''
+          empty_table: true
+          class: ''
+      row:
+        type: fields
+      query:
+        type: views_query
+        options:
+          query_comment: ''
+          disable_sql_rewrite: false
+          distinct: false
+          replica: false
+          query_tags: {  }
+      relationships:
+        content__target_id:
+          id: content__target_id
+          table: lws_resource
+          field: content__target_id
+          relationship: none
+          plugin_id: standard
+          required: false
+      display_extenders: {  }
+  embed_1:
+    id: embed_1
+    display_title: Browser
+    display_plugin: embed
+    position: 1
+    display_options:
+      display_extenders: {  }

@@ -36,7 +36,7 @@ services:
 
   lws_storage.resource_links:
     class: Drupal\lws_storage\ResourceLinks
-    arguments: ['@lws.url_generator', '@lws_storage.storage_registry']
+    arguments: ['@lws.url_generator', '@lws_storage.storage_registry', '@database']
   Drupal\lws_storage\ResourceLinks: '@lws_storage.resource_links'
 
   lws_storage.description_builder:

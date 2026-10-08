@@ -8,12 +8,22 @@ lws_storage.settings:
     max_upload_bytes:
       type: integer
       label: 'The largest content accepted in one request, in bytes. 0 leaves the limit to PHP and the web server.'
+      constraints:
+        Range:
+          min: 0
     max_recursive_delete:
       type: integer
-      label: 'The most resources one recursive delete may remove; more answers 422.'
+      label: 'The most resources one recursive delete may remove; more answers 422. 0 for no limit.'
+      constraints:
+        Range:
+          min: 0
     require_if_match:
       type: boolean
       label: 'Whether changes must be conditional on If-Match; without it they answer 428.'
     page_size:
       type: integer
       label: 'The members on one page of a container listing, for storages that set none.'
+      constraints:
+        Range:
+          min: 1
+          max: 1000

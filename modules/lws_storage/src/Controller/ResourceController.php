@@ -15,6 +15,7 @@ use Drupal\lws\Http\LwsResponse;
 use Drupal\lws\Http\MediaTypeNegotiator;
 use Drupal\lws\Http\Preconditions;
 use Drupal\lws\Routing\LwsTarget;
+use Drupal\lws\Http\RequestBody;
 use Drupal\lws_storage\Entity\LwsResourceInterface;
 use Drupal\lws_storage\Entity\LwsStorageInterface;
 use Drupal\lws_storage\Http\ContentResponse;
@@ -49,15 +50,14 @@ final class ResourceController implements ContainerInjectionInterface {
    */
   private const CONTAINER_MEDIA_TYPES = [MediaType::LWS_JSON, MediaType::LD_JSON, MediaType::JSON];
 
-  /**
-   * The largest JSON resource a patch is applied to, in bytes.
-   */
-  private const MAX_PATCHABLE_BYTES = 16777216;
 
   /**
    * A media type, with any parameters (RFC 9110 §8.3.1).
+   *
+   * Type and subtype start with a letter or digit (RFC 6838 §4.2), as the
+   * access check, which judges a write by the format it sets, expects.
    */
-  private const MEDIA_TYPE = '/^[A-Za-z0-9!#$&^_.+-]+\/[A-Za-z0-9!#$&^_.+-]+(\s*;\s*[A-Za-z0-9!#$&^_.+-]+=("[^"]*"|[A-Za-z0-9!#$&^_.+-]+))*$/';
+  private const MEDIA_TYPE = '/^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*(\s*;\s*[A-Za-z0-9!#$&^_.+-]+=("[^"]*"|[A-Za-z0-9!#$&^_.+-]+))*$/';
 
   public function __construct(
     private readonly ResourceRepository $resources,
@@ -116,7 +116,7 @@ final class ResourceController implements ContainerInjectionInterface {
    */
   public function put(LwsStorageInterface $lws_storage, LwsTarget $lws_target, Request $request): Response {
     $resource = $this->resources->findByTarget($lws_storage, $lws_target) ?? throw LwsHttpException::notFound();
-    $this->requireIfMatch($request);
+    $this->requireIfMatch($lws_storage, $request);
     $setLinkset = WriteRequests::prefersSetLinkset($request);
     $updated = $this->manager->replaceContent(
       $resource,
@@ -141,12 +141,12 @@ final class ResourceController implements ContainerInjectionInterface {
       throw LwsHttpException::unsupportedMediaType('Only JSON resources can be patched; replace others with PUT.');
     }
     $patch = JsonPatches::fromRequest($request);
-    $this->requireIfMatch($request);
+    $this->requireIfMatch($lws_storage, $request);
     $setLinkset = WriteRequests::prefersSetLinkset($request);
     $updated = $this->manager->changeContent(
       $resource,
       static function (string $content) use ($patch): string {
-        if (strlen($content) > self::MAX_PATCHABLE_BYTES) {
+        if (strlen($content) > StorageManager::MAX_CHANGE_BYTES) {
           throw LwsHttpException::unprocessable('The resource is too large to patch; replace it with PUT.');
         }
         try {
@@ -156,7 +156,7 @@ final class ResourceController implements ContainerInjectionInterface {
           throw LwsHttpException::unprocessable('The content of the resource is not JSON, so it cannot be patched.');
         }
         try {
-          return Json::encode($patch->apply($document));
+          return Json::encode(JsonPatches::apply($patch, $document, StorageManager::MAX_CHANGE_BYTES));
         }
         catch (JsonPatchException $e) {
           throw LwsHttpException::conflict($e->getMessage());
@@ -181,7 +181,7 @@ final class ResourceController implements ContainerInjectionInterface {
     if ($depth !== NULL && strtolower(trim($depth)) !== 'infinity') {
       throw LwsHttpException::badRequest('The only Depth a delete accepts is "infinity".');
     }
-    $this->requireIfMatch($request);
+    $this->requireIfMatch($lws_storage, $request);
     $agent = Authentication::fromRequest($request)->agent;
     $this->manager->deleteResource(
       $resource,
@@ -208,24 +208,40 @@ final class ResourceController implements ContainerInjectionInterface {
     $type = MediaTypeNegotiator::negotiate($request->headers->get('Accept'), self::CONTAINER_MEDIA_TYPES)
       ?? throw LwsHttpException::notAcceptable(self::CONTAINER_MEDIA_TYPES);
     $uri = $this->links->uri($storage, $container);
-    // The first page keeps the container's own entity tag, which a later
-    // conditional DELETE of the container compares with.
-    $etag = $container->getEtag() . ($cursor === NULL ? '' : '.' . substr(hash('sha256', $cursor), 0, 12));
     $links = [...$this->links->headers($storage, $container), LinkHeader::format($uri, LinkRelation::FIRST)];
-    $headers = ['Vary' => 'Accept', 'Allow' => $allow];
-    $lastModified = new \DateTimeImmutable('@' . $container->getChangedTime());
+    // What an agent sees depends on its token.
+    $headers = ['Vary' => 'Accept, Authorization', 'Allow' => $allow];
+    $agent = Authentication::fromRequest($request)->agent;
+    $scope = $this->decisions->forAgent($agent, $this->links->contextOf($storage, $container)->storage);
 
-    $status = Preconditions::evaluate($request, $etag, $container->getChangedTime());
+    // An agent who sees every member gets the container's own entity tag on
+    // the first page, which a later conditional DELETE of the container
+    // compares with, and can be answered 304 before the page is made.
+    $page = NULL;
+    $changed = $container->getChangedTime();
+    $etag = $container->getEtag() . ($cursor === NULL ? '' : '.' . substr(hash('sha256', $cursor), 0, 12));
+    if ($this->pager->isFiltered($storage, $container, $scope)) {
+      // Anyone else gets a tag of what they see, and no modification time:
+      // both would otherwise change with members they cannot see.
+      $page = $this->pager->page($storage, $container, $cursor, $scope);
+      $changed = NULL;
+      $etag = 'f' . LwsResponse::etag(Json::encode([
+        array_map(fn (LwsResourceInterface $member): string => $member->uuid() . ' ' . $member->getEtag() . ' ' . $member->getChangedTime(), $page->members),
+        $page->total,
+        $page->next !== NULL,
+        $cursor,
+      ]));
+    }
+    $status = Preconditions::evaluate($request, $etag, $changed);
     if ($status === 412) {
       throw LwsHttpException::preconditionFailed();
     }
     if ($status === 304) {
-      return LwsResponse::empty(Response::HTTP_NOT_MODIFIED, $links, $etag, $headers)->setLastModified($lastModified);
+      $response = LwsResponse::empty(Response::HTTP_NOT_MODIFIED, $links, $etag, $headers);
+      return $changed === NULL ? $response : $response->setLastModified(new \DateTimeImmutable('@' . $changed));
     }
 
-    $agent = Authentication::fromRequest($request)->agent;
-    $context = $this->links->contextOf($storage, $container);
-    $page = $this->pager->page($storage, $container, $cursor, $this->decisions->forAgent($agent, $context->storage));
+    $page ??= $this->pager->page($storage, $container, $cursor, $scope);
     foreach ([LinkRelation::NEXT => $page->next, LinkRelation::PREV => $page->prev, LinkRelation::LAST => $page->last] as $rel => $pageCursor) {
       if ($pageCursor !== NULL) {
         $links[] = LinkHeader::format($pageCursor === '' ? $uri : $uri . '?page=' . $pageCursor, $rel);
@@ -254,8 +270,8 @@ final class ResourceController implements ContainerInjectionInterface {
       'totalItems' => $page->total,
       'items' => $items,
     ];
-    return LwsResponse::json($body, $type->contentType([Vocabulary::LWS_CONTEXT]), $links, $etag, $headers)
-      ->setLastModified($lastModified);
+    $response = LwsResponse::json($body, $type->contentType([Vocabulary::LWS_CONTEXT]), $links, $etag, $headers);
+    return $changed === NULL ? $response : $response->setLastModified(new \DateTimeImmutable('@' . $changed));
   }
 
   /**
@@ -331,13 +347,14 @@ final class ResourceController implements ContainerInjectionInterface {
   }
 
   /**
-   * Refuses unconditional changes where the site requires If-Match.
+   * Refuses unconditional changes where the storage requires If-Match.
    *
    * @throws \Drupal\lws\Http\LwsHttpException
    *   428 without If-Match.
    */
-  private function requireIfMatch(Request $request): void {
-    if ($this->configFactory->get('lws_storage.settings')->get('require_if_match') && !$request->headers->has('If-Match')) {
+  private function requireIfMatch(LwsStorageInterface $storage, Request $request): void {
+    $required = $storage->requiresIfMatch() ?? (bool) $this->configFactory->get('lws_storage.settings')->get('require_if_match');
+    if ($required && !$request->headers->has('If-Match')) {
       throw LwsHttpException::preconditionRequired();
     }
   }
@@ -365,15 +382,10 @@ final class ResourceController implements ContainerInjectionInterface {
   }
 
   /**
-   * The request body, as a stream.
-   *
-   * @return resource
-   *   A readable stream.
+   * The request body, as a stream with its announced length.
    */
-  private function body(Request $request) {
-    $body = $request->getContent(TRUE);
-    assert(is_resource($body));
-    return $body;
+  private function body(Request $request): RequestBody {
+    return RequestBody::fromRequest($request);
   }
 
   /**

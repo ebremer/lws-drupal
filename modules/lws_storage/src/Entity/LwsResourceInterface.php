@@ -15,6 +15,11 @@ use Drupal\lws_storage\Linkset\UserMetadata;
 interface LwsResourceInterface extends ContentEntityInterface, EntityChangedInterface {
 
   /**
+   * The longest path below the storage URI, in characters.
+   */
+  public const MAX_PATH_LENGTH = 2048;
+
+  /**
    * The ID of the storage the resource belongs to.
    */
   public function getLwsStorageId(): int;

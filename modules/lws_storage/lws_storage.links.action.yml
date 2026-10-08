@@ -1,0 +1,5 @@
+entity.lws_storage.add_form:
+  route_name: entity.lws_storage.add_form
+  title: 'Add storage'
+  appears_on:
+    - entity.lws_storage.collection

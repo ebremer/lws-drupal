@@ -9,9 +9,15 @@ use Drupal\Core\Entity\ContentEntityBase;
 use Drupal\Core\Entity\EntityChangedTrait;
 use Drupal\Core\Entity\EntityStorageInterface;
 use Drupal\Core\Entity\EntityTypeInterface;
+use Drupal\Core\Entity\Routing\AdminHtmlRouteProvider;
 use Drupal\Core\Field\BaseFieldDefinition;
 use Drupal\Core\StringTranslation\TranslatableMarkup;
 use Drupal\lws\Routing\LwsUrlParser;
+use Drupal\lws_storage\Form\LwsStorageDeleteForm;
+use Drupal\lws_storage\Form\LwsStorageForm;
+use Drupal\lws_storage\Listing\ContainerPager;
+use Drupal\lws_storage\LwsStorageAccessControlHandler;
+use Drupal\lws_storage\LwsStorageListBuilder;
 use Drupal\lws_storage\LwsStorageStorageSchema;
 use Drupal\lws_storage\StorageManager;
 use Drupal\views\EntityViewsData;
@@ -35,8 +41,26 @@ use Drupal\views\EntityViewsData;
   handlers: [
     'storage_schema' => LwsStorageStorageSchema::class,
     'views_data' => EntityViewsData::class,
+    'access' => LwsStorageAccessControlHandler::class,
+    'list_builder' => LwsStorageListBuilder::class,
+    'form' => [
+      'add' => LwsStorageForm::class,
+      'edit' => LwsStorageForm::class,
+      'delete' => LwsStorageDeleteForm::class,
+    ],
+    'route_provider' => [
+      'html' => AdminHtmlRouteProvider::class,
+    ],
+  ],
+  links: [
+    'collection' => '/admin/content/lws',
+    'add-form' => '/admin/content/lws/add',
+    'edit-form' => '/admin/content/lws/{lws_storage}',
+    'delete-form' => '/admin/content/lws/{lws_storage}/delete',
   ],
   admin_permission: 'administer lws storages',
+  // Owners see their own storages in the list.
+  collection_permission: 'administer lws storages+manage own lws storages',
   base_table: 'lws_storage',
   label_count: [
     'singular' => '@count LWS storage',
@@ -69,22 +93,26 @@ class LwsStorage extends ContentEntityBase implements LwsStorageInterface {
           'message' => 'A slug is 1 to 63 lower-case letters, digits and hyphens, starting with a letter or digit, and not agents, groups, oauth or roles.',
         ],
       ])
-      ->addConstraint('UniqueField');
+      ->addConstraint('UniqueField')
+      ->setDisplayOptions('form', ['type' => 'string_textfield', 'weight' => -10]);
 
     $fields['label'] = BaseFieldDefinition::create('string')
       ->setLabel(new TranslatableMarkup('Label'))
       ->setRequired(TRUE)
-      ->setSetting('max_length', 255);
+      ->setSetting('max_length', 255)
+      ->setDisplayOptions('form', ['type' => 'string_textfield', 'weight' => -20]);
 
     $fields['controllers'] = BaseFieldDefinition::create('uri')
       ->setLabel(new TranslatableMarkup('Storage controllers'))
       ->setDescription(new TranslatableMarkup('Agents with full control of the storage, by URI.'))
-      ->setCardinality(BaseFieldDefinition::CARDINALITY_UNLIMITED);
+      ->setCardinality(BaseFieldDefinition::CARDINALITY_UNLIMITED)
+      ->setDisplayOptions('form', ['type' => 'uri', 'weight' => 0]);
 
     $fields['owner'] = BaseFieldDefinition::create('entity_reference')
       ->setLabel(new TranslatableMarkup('Owner'))
       ->setDescription(new TranslatableMarkup('The Drupal user who administers the storage.'))
-      ->setSetting('target_type', 'user');
+      ->setSetting('target_type', 'user')
+      ->setDisplayOptions('form', ['type' => 'entity_reference_autocomplete', 'weight' => 5]);
 
     $fields['authorization_server'] = BaseFieldDefinition::create('string')
       ->setLabel(new TranslatableMarkup('Authorization server'))
@@ -111,11 +139,22 @@ class LwsStorage extends ContentEntityBase implements LwsStorageInterface {
       ->setLabel(new TranslatableMarkup('Page size'))
       ->setDescription(new TranslatableMarkup('The members on one page of a container listing. Empty for the site default.'))
       ->setSetting('unsigned', TRUE)
-      ->setSetting('min', 1);
+      ->setSetting('min', 1)
+      ->setSetting('max', ContainerPager::MAX_PAGE_SIZE);
+
+    $fields['require_if_match'] = BaseFieldDefinition::create('boolean')
+      ->setLabel(new TranslatableMarkup('Require If-Match'))
+      ->setDescription(new TranslatableMarkup('Whether changes must be conditional on If-Match. Empty for the site default.'));
 
     $fields['status'] = BaseFieldDefinition::create('boolean')
       ->setLabel(new TranslatableMarkup('Enabled'))
-      ->setDefaultValue(TRUE);
+      ->setDescription(new TranslatableMarkup('A storage that is not enabled answers every request with 503 Service Unavailable.'))
+      ->setDefaultValue(TRUE)
+      ->setDisplayOptions('form', [
+        'type' => 'boolean_checkbox',
+        'settings' => ['display_label' => TRUE],
+        'weight' => 50,
+      ]);
 
     $fields['created'] = BaseFieldDefinition::create('created')
       ->setLabel(new TranslatableMarkup('Created'));
@@ -182,8 +221,45 @@ class LwsStorage extends ContentEntityBase implements LwsStorageInterface {
   /**
    * {@inheritdoc}
    */
+  public function requiresIfMatch(): ?bool {
+    $value = $this->get('require_if_match')->value;
+    return $value === NULL || $value === '' ? NULL : (bool) $value;
+  }
+
+  /**
+   * {@inheritdoc}
+   */
   public function isEnabled(): bool {
     return (bool) $this->get('status')->value;
+  }
+
+  /**
+   * {@inheritdoc}
+   *
+   * The slug is in every URI of the storage: in access tokens' audiences, in
+   * policies and in clients' links. It never changes.
+   */
+  public function preSave(EntityStorageInterface $storage): void {
+    parent::preSave($storage);
+    $original = $this->isNew() ? NULL : $this->getOriginal();
+    if ($original instanceof LwsStorageInterface && $original->getSlug() !== $this->getSlug()) {
+      throw new \LogicException(sprintf('The storage %s cannot be renamed to %s.', $original->getSlug(), $this->getSlug()));
+    }
+  }
+
+  /**
+   * {@inheritdoc}
+   *
+   * A new storage gets its root container, in the transaction that saves it.
+   */
+  public function postSave(EntityStorageInterface $storage, $update = TRUE): void {
+    parent::postSave($storage, $update);
+    if (!$update) {
+      \Drupal::entityTypeManager()->getStorage('lws_resource')->create([
+        'storage' => $this->id(),
+        'name' => 'root/',
+      ])->save();
+    }
   }
 
   /**

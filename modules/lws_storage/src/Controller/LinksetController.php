@@ -12,6 +12,7 @@ use Drupal\lws\Http\MediaTypeNegotiator;
 use Drupal\lws\Http\Preconditions;
 use Drupal\lws\Routing\LwsTarget;
 use Drupal\lws\Routing\LwsUrlGenerator;
+use Drupal\lws\Http\RequestBody;
 use Drupal\lws_storage\Entity\LwsResourceInterface;
 use Drupal\lws_storage\Entity\LwsStorageInterface;
 use Drupal\lws_storage\Http\JsonPatches;
@@ -84,10 +85,7 @@ final class LinksetController implements ContainerInjectionInterface {
     if (!in_array($type, self::MEDIA_TYPES, TRUE)) {
       throw LwsHttpException::unsupportedMediaType('Send a linkset document, as application/linkset+json.');
     }
-    $body = (string) $request->getContent();
-    if (strlen($body) > JsonPatches::MAX_BYTES) {
-      throw LwsHttpException::contentTooLarge(JsonPatches::MAX_BYTES);
-    }
+    $body = RequestBody::read($request, JsonPatches::MAX_BYTES);
     try {
       $document = Json::decode($body);
     }
@@ -117,7 +115,7 @@ final class LinksetController implements ContainerInjectionInterface {
         // As the client saw it: decoded the way a client decodes it.
         $document = Json::decode(Json::encode($this->linksets->document($lws_storage, $current)));
         try {
-          $patched = $patch->apply($document);
+          $patched = JsonPatches::apply($patch, $document, JsonPatches::MAX_BYTES);
         }
         catch (JsonPatchException $e) {
           throw LwsHttpException::conflict($e->getMessage());

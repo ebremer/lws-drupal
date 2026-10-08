@@ -12,6 +12,8 @@ use Drupal\lws\Routing\LwsUrlGenerator;
 use Drupal\lws_authz\AuthorizationServers;
 use Drupal\lws_authz\Server\LocalAuthorizationServer;
 use Drupal\lws_authz\Server\SigningKeys;
+use GuzzleHttp\ClientInterface;
+use GuzzleHttp\Exception\GuzzleException;
 
 /**
  * Status report entries for LWS authorization.
@@ -25,6 +27,7 @@ final class LwsAuthzRequirements {
     private readonly LocalAuthorizationServer $local,
     private readonly SigningKeys $keys,
     private readonly LwsUrlGenerator $urls,
+    private readonly ClientInterface $httpClient,
   ) {}
 
   /**
@@ -35,10 +38,14 @@ final class LwsAuthzRequirements {
    */
   #[Hook('runtime_requirements')]
   public function runtime(): array {
-    return [
+    $requirements = [
       'lws_authz_default_server' => $this->defaultServer(),
       'lws_authz_local_server' => $this->localServer(),
     ];
+    if ($this->local->isAvailable()) {
+      $requirements['lws_authz_metadata'] = $this->metadata();
+    }
+    return $requirements;
   }
 
   /**
@@ -67,6 +74,51 @@ final class LwsAuthzRequirements {
         ':url' => Url::fromRoute('lws_authz.settings')->toString(),
       ]),
       'severity' => RequirementSeverity::Error,
+    ];
+  }
+
+  /**
+   * The entry for the metadata of this site's authorization server.
+   *
+   * Clients find the token endpoint through it (LWS Core §5.2.2), at the root
+   * of the issuer's origin, which a proxy or the web server may not pass on
+   * to Drupal. The status report asks for it as a client would.
+   *
+   * @return array<string, mixed>
+   *   The requirement.
+   */
+  private function metadata(): array {
+    $issuer = $this->local->getIssuer();
+    $url = $issuer . LocalAuthorizationServer::METADATA_PATH;
+    $requirement = ['title' => $this->t('LWS authorization server metadata'), 'value' => $url];
+    try {
+      $response = $this->httpClient->request('GET', $url, [
+        'timeout' => 5,
+        'http_errors' => FALSE,
+        'allow_redirects' => FALSE,
+        'headers' => ['Accept' => 'application/json'],
+      ]);
+      $status = $response->getStatusCode();
+      $metadata = $status === 200 ? json_decode((string) $response->getBody(), TRUE) : NULL;
+      $problem = match (TRUE) {
+        $status !== 200 => $this->t('It answers @status.', ['@status' => $status]),
+        !is_array($metadata) => $this->t('It is not JSON.'),
+        ($metadata['issuer'] ?? NULL) !== $issuer => $this->t('It names another issuer: @issuer.', ['@issuer' => is_string($metadata['issuer'] ?? NULL) ? $metadata['issuer'] : '-']),
+        default => NULL,
+      };
+    }
+    catch (GuzzleException $e) {
+      $problem = $this->t('It cannot be fetched: @message', ['@message' => $e->getMessage()]);
+    }
+    if ($problem === NULL) {
+      return $requirement + ['severity' => RequirementSeverity::OK];
+    }
+    return $requirement + [
+      'description' => $this->t('@problem Clients cannot find where to exchange their credentials for access tokens. Make sure that the web server, and any proxy in front of it, passes @path to Drupal.', [
+        '@problem' => $problem,
+        '@path' => LocalAuthorizationServer::METADATA_PATH,
+      ]),
+      'severity' => RequirementSeverity::Warning,
     ];
   }
 

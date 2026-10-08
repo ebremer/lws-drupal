@@ -6,6 +6,7 @@ namespace Drupal\lws_storage\Listing;
 
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
+use Drupal\Core\Site\Settings;
 use Drupal\lws\Access\AgentAccessScopeInterface;
 use Drupal\lws\Http\LwsHttpException;
 use Drupal\lws\Http\PaginationCursor;
@@ -30,6 +31,18 @@ final class ContainerPager {
    * The members fetched per query when they are checked one by one.
    */
   private const BATCH = 100;
+
+  /**
+   * The most members one page may hold, whatever a storage asks for.
+   */
+  public const MAX_PAGE_SIZE = 1000;
+
+  /**
+   * The members a filtered page, and its count, examine at most.
+   *
+   * $settings['lws_storage_scan_limit'] changes it.
+   */
+  public const SCAN_LIMIT = 1000;
 
   public function __construct(
     private readonly ResourceRepository $resources,
@@ -57,11 +70,20 @@ final class ContainerPager {
   public function page(LwsStorageInterface $storage, LwsResourceInterface $container, ?string $cursor, AgentAccessScopeInterface $scope): ContainerPage {
     $after = $cursor === NULL ? NULL : $this->after($container, $cursor);
     $size = $this->pageSize($storage);
-    $page = $scope->readsSubtree($this->links->contextOf($storage, $container))
-      ? $this->plainPage($container, $after, $size)
-      : $this->checkedPage($storage, $container, $after, $size, $scope);
+    $page = $this->isFiltered($storage, $container, $scope)
+      ? $this->checkedPage($storage, $container, $after, $size, $scope)
+      : $this->plainPage($container, $after, $size);
     $this->preloadFiles($page->members);
     return $page;
+  }
+
+  /**
+   * Whether an agent's listing of a container leaves members out.
+   *
+   * It does unless the agent may read everything below the container.
+   */
+  public function isFiltered(LwsStorageInterface $storage, LwsResourceInterface $container, AgentAccessScopeInterface $scope): bool {
+    return !$scope->readsSubtree($this->links->contextOf($storage, $container));
   }
 
   /**
@@ -79,7 +101,8 @@ final class ContainerPager {
    * The members on one page of a storage's listings.
    */
   public function pageSize(LwsStorageInterface $storage): int {
-    return max(1, $storage->getPageSize() ?? (int) ($this->configFactory->get('lws_storage.settings')->get('page_size') ?: 100));
+    $size = $storage->getPageSize() ?? (int) ($this->configFactory->get('lws_storage.settings')->get('page_size') ?: 100);
+    return min(self::MAX_PAGE_SIZE, max(1, $size));
   }
 
   /**
@@ -116,17 +139,30 @@ final class ContainerPager {
   /**
    * A page of the members the agent may read, checked one by one.
    *
+   * A page examines at most SCAN_LIMIT members, or one page's worth if that
+   * is more: if the page is not full by then, it ends there, and the next
+   * page goes on from the last member examined, which the encrypted cursor
+   * does not reveal. totalItems counts the visible members among the first
+   * SCAN_LIMIT, which is exact for most containers and never more than the
+   * truth: an estimate would tell how many members the agent cannot see.
+   * LWS Core §8.1 lets the count be approximate.
+   *
    * Names are compared by the database, as when the members are ordered.
    */
   private function checkedPage(LwsStorageInterface $storage, LwsResourceInterface $container, ?string $after, int $size, AgentAccessScopeInterface $scope): ContainerPage {
     $visible = [];
     $next = NULL;
     $position = $after;
-    do {
-      $batch = $this->resources->membersAfter($container, $position, self::BATCH);
-      foreach ($batch as $member) {
+    $limit = max(1, (int) Settings::get('lws_storage_scan_limit', self::SCAN_LIMIT));
+    $budget = max($limit, $size);
+    while (TRUE) {
+      $wanted = min(self::BATCH, $budget);
+      $batch = $this->resources->membersAfter($container, $position, $wanted);
+      $contexts = $this->links->contextsOf($storage, $batch);
+      foreach ($batch as $i => $member) {
         $position = $member->getName();
-        if (!$scope->mayRead($this->links->contextOf($storage, $member))) {
+        $budget--;
+        if (!$scope->mayRead($contexts[$i])) {
           continue;
         }
         if (count($visible) === $size) {
@@ -135,20 +171,31 @@ final class ContainerPager {
         }
         $visible[] = $member;
       }
-    } while (count($batch) === self::BATCH);
+      if (count($batch) < $wanted) {
+        break;
+      }
+      if ($budget <= 0) {
+        $next = $this->cursor($container, count($visible) === $size ? $visible[$size - 1]->getName() : (string) $position);
+        break;
+      }
+    }
 
     $total = 0;
+    $seen = 0;
     $position = NULL;
     do {
-      $batch = $this->resources->membersAfter($container, $position, self::BATCH);
-      foreach ($batch as $member) {
+      $wanted = min(self::BATCH, $limit - $seen);
+      $batch = $this->resources->membersAfter($container, $position, $wanted);
+      $contexts = $this->links->contextsOf($storage, $batch);
+      foreach ($batch as $i => $member) {
         $position = $member->getName();
-        if ($scope->mayRead($this->links->contextOf($storage, $member))) {
+        $seen++;
+        if ($scope->mayRead($contexts[$i])) {
           $total++;
         }
       }
-    } while (count($batch) === self::BATCH);
-    return new ContainerPage($visible, $total, $next);
+    } while (count($batch) === $wanted && $seen < $limit);
+    return new ContainerPage($visible, $total, $next, NULL, NULL, TRUE);
   }
 
   /**

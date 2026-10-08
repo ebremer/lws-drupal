@@ -158,7 +158,8 @@ final class StorageHttpTest extends LwsStorageKernelTestBase {
     foreach (['application/lws+json', 'application/ld+json', 'application/json'] as $type) {
       $response = $this->send('GET', '/lws/alice/root/', ['Accept' => $type]);
       $this->assertSame($type, $response->headers->get('Content-Type'));
-      $this->assertSame('Accept', $response->headers->get('Vary'));
+      // What a listing holds depends on the token too.
+      $this->assertSame('Accept, Authorization', $response->headers->get('Vary'));
     }
     $profile = 'application/ld+json; profile="https://www.w3.org/ns/lws/v1"';
     $this->assertSame($profile, $this->send('GET', '/lws/alice/root/', ['Accept' => $profile])->headers->get('Content-Type'));

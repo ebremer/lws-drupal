@@ -535,8 +535,10 @@ different one. Clients must not depend on it; `Accept-Patch` is the normative si
 
 - **Order and cursors.** Items are ordered by `name` under binary collation. Pagination uses
   keyset cursors, so it stays stable while the container changes. A cursor is an opaque string,
-  `?page=<base64url(json{a: after})>.<signature>`, signed with the site's private key for one
-  container (its UUID).
+  `?page=<base64url(iv ‖ tag ‖ ciphertext)>`: the name it starts after, encrypted with AES-256-GCM
+  under a key derived from the site's private key, with the container's UUID as associated data.
+  Nobody can read it, as a filtered page may end on a member the agent cannot see (S5). The IV is
+  a MAC of the container and the name, so one position always makes one cursor.
   - `first` (the container URI) is always present, and `next` is present when more items exist
     (§12.1.2).
   - `prev` and `last` are sent when the listing is a plain query (step 3 below); `last` starts at
@@ -554,9 +556,15 @@ different one. Clients must not depend on it; `Accept-Patch` is the normative si
   3. When the agent may read the whole container subtree and no constraint narrows it, the
      listing is a plain SQL page (resources joined to `file_managed` for `format` and `size`),
      and `totalItems` is a `COUNT(*)`.
-  4. Otherwise the server scans in keyset order until a page is filled.
-  5. `totalItems` counts the visible members. Above a configurable threshold it is approximate,
-     which §8.1.1 allows.
+  4. Otherwise the server scans in keyset order until a page is filled, or until it has examined
+     `$settings['lws_storage_scan_limit']` members (1,000), or one page's worth if that is more;
+     a page that stops early links `next` from the last member examined.
+  5. `totalItems` counts the visible members among the first `lws_storage_scan_limit`, so it is
+     exact for most containers and never more than the truth, which §8.1.1 allows. An estimate
+     would tell how many members the agent cannot see.
+  6. A filtered page's entity tag is a hash of what it shows (`"f…"`), and it has no
+     `Last-Modified`: both would otherwise change with members the agent cannot see. Every
+     listing sends `Vary: Accept, Authorization`.
 
 ### 5.7 Admin UI, permissions, Drush
 
@@ -1010,10 +1018,10 @@ Core's site-wide `cors.config` can stay off.
 | Token theft and replay | Tokens last ≤300 s and are bound to one audience. Tokens are never logged (hash prefixes only). `Cache-Control: no-store` on token responses. DPoP is a later step ([§14](#14-open-questions)) |
 | JOSE pitfalls | `alg` allow-list per key type. `none` and `HS*` are rejected. The key type must match `alg`. `typ` is checked. The `kid` must belong to the expected issuer or subject |
 | SSRF through `sub`, `iss`, `jwks_uri` and inbox URLs | `lws.outbound_http` guard ([§6.4](#64-authentication-suites)) |
-| Resource exhaustion | Quotas (`507`), upload caps, recursive-delete limit (`lws_storage.settings:max_recursive_delete`; above it → `422` with a problem detail), page-size cap, flood control on the token endpoint, access-request service and subscriptions |
-| Bypassing LWS policy through core's private-file route (`/system/files/…`) or image styles | `hook_file_download()` returns `-1` for every LWS file to users without `administer lws storages` ([§5.3](#53-content-as-managed-files)) |
+| Resource exhaustion | Quotas (`507`), upload caps, recursive-delete limit (`lws_storage.settings:max_recursive_delete`; above it → `422` with a problem detail), page-size cap, flood control on the token endpoint, access-request service and subscriptions. Since S5: bodies are refused by their `Content-Length` before they are read (`413`, or `507` when the quota cannot hold them), small bodies (linksets, patches, access documents) are read no further than their limit, a recursive delete counts before it loads or locks anything, a filtered listing examines a bounded number of members, a patch has at most 1,000 operations and 32 `copy`s, and a patched document may not grow past its limit, user types are at most 32 URIs of at most 2,048 bytes, and paths at most 2,048 characters |
+| Bypassing LWS policy through core's private-file route (`/system/files/…`) or image styles | `hook_file_download()` returns `-1` for every LWS file to users without `administer lws storages` ([§5.3](#53-content-as-managed-files)). Administrators get it as an attachment, with `CSP: sandbox` (S5) |
 | Information disclosure | Listings filtered per agent (§7.5). Optional `404` concealment. Problem details never echo token contents. Grants and requests visible only to the parties involved (§17.1) |
-| Path traversal and name tricks | Content file URIs are made of UUIDs. Names are segment-validated: no `/`, `.` or `..`, no control characters, NFC-normalised, case-sensitive |
+| Path traversal and name tricks | Content file URIs are made of UUIDs. Names are segment-validated: no `/`, `.` or `..`, no control characters, case-sensitive. Names made from `Slug` are ASCII (`[A-Za-z0-9._~-]`), so there is nothing to normalise; only `createContainer()` (Drush, tests) takes others, as given. A name and its twin with or without the slash (`notes`, `notes/`) are never both taken, and policy targets match exactly. Paths are at most 2,048 characters (`400` beyond) |
 
 ### 8.5 Logging and audit
 
@@ -1290,6 +1298,144 @@ with no adapters.
   - recursive-delete limits;
   - a performance pass: 10,000-item containers; listing p95 under 150 ms for controllers.
 - **Exit:** a security review of S1–S4, and a load-test report.
+
+**Done.** Differences from the plan above:
+
+- **Built:**
+  - **Storage pages.** `/admin/content/lws` (a tab of *Content*, and a menu link) lists storages:
+    all of them for `administer lws storages`, their own for owners with `manage own lws storages`.
+    Add, edit and delete forms; tabs *Edit*, *Access*, *Resources* and *Delete*.
+  - **The storage form.** The slug is fixed once the storage exists; `LwsStorage::preSave()`
+    refuses a rename however it is attempted. The authorization server is a choice. The quota is
+    given as a size (`10 GB`) and shown back exactly. The form sets the page size (at most 1,000)
+    and whether changes need `If-Match`, which is now per storage (`require_if_match`: empty for
+    the site default; update hook `lws_storage_update_11001`). A new storage gets its root
+    container in `postSave()`, inside the transaction that saves it, however it is created.
+  - **Deleting a storage.** One of more than 200 resources is blocked first, so it answers `503`,
+    then emptied in a batch, deepest first.
+  - **The *Storages* settings tab** (`lws_storage.settings`): content scheme, largest content
+    (as a size), largest recursive delete, page size and `If-Match`.
+  - **The resource browser.** A View, `lws_resources`, in `config/optional`, over `lws_resource`
+    with a relationship to the content file (`LwsResourceViewsData`, as core relates no file base
+    field). It shows path, kind, media type, size, creator and changed time, with exposed filters
+    on the start of the path and the kind. Its operations come from `LwsResourceListBuilder`:
+    *Download* and *Create media item*.
+  - ***Create media item*** (with Media). The content is copied into the upload location of a
+    media type made from a file (`File` source and its subclasses). The type is suggested by the
+    content's extension, and an extension is added for the media type when the name has none.
+    The item is created unpublished. The copy stays temporary, owned by the user, until the item
+    is saved, as an upload through Media's own form would be.
+  - **Status report:**
+    - HTTPS: an error, or a warning on a loopback host;
+    - largest content against `post_max_size`, and its absence;
+    - content in a public file system: an error;
+    - the authorization server's metadata, fetched from the issuer as clients fetch it.
+  - **Headers.** `Content-Security-Policy: sandbox` on every response under the prefix that sets
+    none. Core already sends `nosniff` everywhere. Administrators' downloads through
+    `/system/files` are attachments, with `CSP: sandbox`.
+  - **Content in streams that cannot seek** (deferred from S2). `ContentResponse` reaches a range
+    by reading past the bytes before it, since `BinaryFileResponse` would send it from the start.
+    A test stream wrapper that cannot seek proves it.
+  - **`tests/load/`**: the load test below, to run again.
+- **Security review of S1–S4.** An agent separate from the one that built them reviewed S1–S4,
+  and its findings were checked against the code before they were fixed:
+  1. **High: a policy on `…/notes` covered the container `…/notes/` and all in it, and the
+     reverse.** `PolicyEvaluator::covers()` compared URIs without their trailing slash, and both
+     names could exist. Now targets match exactly. A policy for containers alone may name one
+     without its slash, as it can mean nothing else. A name is refused while its twin with or
+     without the slash exists.
+  2. **Medium: `Link` header injection.** A linkset type href with `>` was sent in every
+     response's `Link` header, which could forge `rel="…lws#storage"` and send clients to another
+     authorization server. Now:
+     - hrefs must be RFC 3986 URIs, at most 2,048 bytes;
+     - a resource has at most 32 types;
+     - the LWS namespace, and server-managed relations, compare case-insensitively;
+     - stored types are checked again before they are sent.
+  3. **Medium: a recursive delete loaded and locked the whole subtree before checking the
+     limit, and its `422` gave the count.** Now:
+     - emptiness is one `LIMIT 1` query;
+     - the count is capped at the limit plus one, and taken before anything is loaded or locked;
+     - the message gives the limit only.
+  4. **Medium/low: filtered listings scanned the whole container twice.** Now a page examines at
+     most `lws_storage_scan_limit` members (see [§5.6](#56-container-listings-and-pagination)).
+     Cursors are encrypted, as a page may now end on a hidden member.
+  5. **Medium/low: bodies.**
+     - A body that ended before its `Content-Length` was kept as a whole new version. Now `400`,
+       and nothing is kept.
+     - Limits applied only once the bytes were on disk. Now `Content-Length` is compared with the
+       largest content (`413`), the quota's room (`507`) and, for `POST`, `post_max_size`
+       (`413`), before anything is read. The quota's room also stops a body without a length as
+       it streams.
+  6. **Low: a `PUT` with a media type starting with a symbol** (`+x/y`) passed the access check
+     as no change of format. The controller now accepts only types the access check reads (RFC
+     6838 §4.2).
+  7. **Low: one listing tag for all agents.** It also changed with members the agent cannot
+     see. Filtered pages now get their own tag, have no `Last-Modified`, and send
+     `Vary: Accept, Authorization`.
+  8. **Low: small bodies were read whole before their size was checked.** This covered linksets,
+     patches, access documents, and the content a patch applies to. Now they are read no further
+     than their limit, and checked by size first. A patch has at most 1,000 operations and 32
+     `copy`s, and the document is checked after each `copy`.
+  9. **Low: nesting beyond the 2,048-character path column was a `500`.** It is now a `400`.
+
+  Also from the review: a path alias whose source is under `/_lws/` could take LWS traffic. That
+  is a denial of service by someone with *Create URL aliases*, not a leak, and stays a known
+  limitation. Two items are unchanged:
+  - the quota counts content, not metadata or the number of resources;
+  - a base URL left empty follows the `Host` header, which the status report flags.
+
+  The NFC claim of [§8.4](#84-security) was corrected: names from `Slug` are ASCII.
+- **Built differently:**
+  - **The storage list is an entity list builder, not a View.** Owners must see their own
+    storages, and a View's access is one permission. The browser's page belongs to the module,
+    and embeds the View. The page therefore exists, and says what is missing, without Views. A
+    View cannot have a tab on a path with a named argument either.
+  - **Cursors are encrypted, not signed.** AES-256-GCM with the container as associated data,
+    and a synthetic IV (a MAC of the container and the name), so one position makes one cursor.
+  - **`nosniff`, `CSP: sandbox` on data and the recursive-delete limit existed since S2.** S5
+    extends the sandbox to every response, and makes the limit cheap to enforce.
+- **Left out:** the `create lws storage` permission. Only administrators create storages until
+  Q2 says whether users may create their own.
+- **Load test.** `tests/load/` makes a storage whose container `big/` holds 10,000 data resources,
+  half `text/plain`. Its controller lists `big/`; a viewer, who may read the containers and the
+  text, gets filtered pages. ApacheBench, 500 requests each, against Apache with mod_php 8.3 and
+  opcache, Drupal 11.4 on SQLite, in Docker Desktop on a Windows laptop, with the module on the
+  container's file system. Pages hold 100 members.
+
+  | Request | Concurrency | p50 | p95 | p99 |
+  |---|---|---|---|---|
+  | `OPTIONS` (the floor: no route, no token) | 1 | 10 ms | 16 ms | — |
+  | Storage description (public) | 1 | 13 ms | 15 ms | 17 ms |
+  | Controller: `root/` (one member) | 1 | 19 ms | 21 ms | 25 ms |
+  | **Controller: `big/`, first page** | 1 | 35 ms | **40 ms** | 43 ms |
+  | Controller: `big/`, second page | 1 | 36 ms | 40 ms | 50 ms |
+  | Controller: `big/`, last page | 1 | 36 ms | 41 ms | 63 ms |
+  | Controller: `big/`, `304` | 1 | 18 ms | 24 ms | 28 ms |
+  | Controller: a data resource | 1 | 20 ms | 24 ms | 31 ms |
+  | **Controller: `big/`, first page** | 4 | 55 ms | **97 ms** | 116 ms |
+  | Viewer: `big/`, first page (filtered) | 1 | 125 ms | 214 ms | 421 ms |
+  | Viewer: a data resource | 1 | 34 ms | 52 ms | 62 ms |
+  | Viewer: `big/`, first page (filtered) | 4 | 132 ms | 199 ms | 218 ms |
+
+  - **The target holds.** A controller's listing has p95 = 40 ms at concurrency 1, and 97 ms at
+    concurrency 4, under 150 ms.
+  - **Where the controller's time goes.** In-process, its page takes 23 ms, `totalItems` (a
+    `COUNT`) included.
+  - **Filtered pages examine about 1,200 members:** about 200 to fill the page, and 1,000 for the
+    count. Two changes cut that from 417 ms to 125 ms at p50:
+    - building the access contexts a batch at a time, with media types in one query instead of
+      through each file entity;
+    - the module on a local file system instead of the bind mount.
+  - **The bind mount.** With the code on the Windows drive, every `file_exists()` of the
+    autoloader costs 1.8 ms instead of 0.002 ms, which added about 90 ms to every request.
+    Measure on a local file system.
+  - **Populating.** Creating the 10,000 resources took 75 s, 7.5 ms each.
+- **Verified:**
+  - 479 tests; phpcs and phpstan (level 8) are clean;
+  - the pages through Apache, with Views, on the development site;
+  - Touchstone `core`: 102 passed, 1 failed (the SHOULD on inbox notifications, for S6),
+    20 inapplicable, as after A4;
+  - Touchstone `auth/cid`: 22/22.
 
 **S6–S8.** These are `lws_notify`, `lws_index` and `lws_projection`, in that order, each optional
 ([§7](#7-optional-modules)).

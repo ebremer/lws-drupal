@@ -42,6 +42,11 @@ final class StorageManager {
    */
   public const GC_QUEUE = 'lws_storage_gc';
 
+  /**
+   * The largest content a change computed from the current one may read.
+   */
+  public const MAX_CHANGE_BYTES = 16777216;
+
   public function __construct(
     private readonly EntityTypeManagerInterface $entityTypeManager,
     private readonly Connection $database,
@@ -100,18 +105,8 @@ final class StorageManager {
       throw new \InvalidArgumentException(implode(' ', $messages));
     }
 
-    $transaction = $this->database->startTransaction();
-    try {
-      $storage->save();
-      $this->entityTypeManager->getStorage('lws_resource')->create([
-        'storage' => $storage->id(),
-        'name' => 'root/',
-      ])->save();
-    }
-    catch (\Throwable $e) {
-      $transaction->rollBack();
-      throw $e;
-    }
+    // Saving makes the root container too (LwsStorage::postSave()).
+    $storage->save();
     return $storage;
   }
 
@@ -136,6 +131,9 @@ final class StorageManager {
     if ($error !== NULL) {
       throw new \InvalidArgumentException($error);
     }
+    if ($this->resources->findChild($parent, $name) !== NULL) {
+      throw new \InvalidArgumentException(sprintf('The container already has a data resource named %s.', $name));
+    }
     return $this->insert($parent, $name . '/', $this->uuid->generate());
   }
 
@@ -151,7 +149,7 @@ final class StorageManager {
    *   The identity hint, as the Slug header gave it.
    * @param bool $container
    *   Whether to create a container rather than a data resource.
-   * @param resource|null $body
+   * @param resource|\Drupal\lws\Http\RequestBody|null $body
    *   For a data resource, its content as a readable stream.
    * @param string $mediaType
    *   For a data resource, the media type of its content.
@@ -168,14 +166,22 @@ final class StorageManager {
     $uuid = $this->uuid->generate();
     $content = NULL;
     if (!$container) {
-      $content = $this->content->write($body ?? throw new \InvalidArgumentException('A data resource needs a body.'), $this->storageUuid($parent), $uuid);
+      $content = $this->content->write(
+        $body ?? throw new \InvalidArgumentException('A data resource needs a body.'),
+        $this->storageUuid($parent),
+        $uuid,
+        $this->room($parent->getLwsStorageId()),
+      );
     }
     try {
       if ($content !== NULL) {
         $this->validate($content, $mediaType);
       }
       foreach (ResourceNames::candidates($hint, $container, $this->uuid->generate(...)) as $name) {
-        if ($this->resources->findChild($parent, $name) !== NULL) {
+        // A name is taken by its twin with or without the slash too: "notes"
+        // and "notes/" side by side would read as one resource to people.
+        $twin = str_ends_with($name, '/') ? substr($name, 0, -1) : $name . '/';
+        if ($this->resources->findChild($parent, $name) !== NULL || $this->resources->findChild($parent, $twin) !== NULL) {
           continue;
         }
         try {
@@ -203,7 +209,7 @@ final class StorageManager {
    *
    * @param \Drupal\lws_storage\Entity\LwsResourceInterface $resource
    *   The data resource.
-   * @param resource $body
+   * @param resource|\Drupal\lws\Http\RequestBody $body
    *   The new content, as a readable stream.
    * @param string|null $mediaType
    *   Its media type; NULL keeps the current one.
@@ -225,7 +231,7 @@ final class StorageManager {
     if ($resource->isContainer()) {
       throw new \InvalidArgumentException('Only data resources have content.');
     }
-    $content = $this->content->write($body, $this->storageUuid($resource), (string) $resource->uuid());
+    $content = $this->content->write($body, $this->storageUuid($resource), (string) $resource->uuid(), $this->room($resource->getLwsStorageId(), (int) $resource->getSize()));
     $mediaType ??= $resource->getMediaType() ?? 'application/octet-stream';
     try {
       // Validators may take a while, so they run before anything is locked.
@@ -282,6 +288,9 @@ final class StorageManager {
       if ($precondition !== NULL) {
         $precondition($current);
       }
+      if (($current->getSize() ?? 0) > self::MAX_CHANGE_BYTES) {
+        throw LwsHttpException::unprocessable('The resource is too large to patch; replace it with PUT.');
+      }
       $uri = $current->getContentFile()?->getFileUri();
       $bytes = $uri === NULL ? FALSE : @file_get_contents($uri);
       if ($bytes === FALSE) {
@@ -293,7 +302,7 @@ final class StorageManager {
       }
       fwrite($stream, $change($bytes));
       rewind($stream);
-      $content = $this->content->write($stream, $this->storageUuid($current), (string) $current->uuid());
+      $content = $this->content->write($stream, $this->storageUuid($current), (string) $current->uuid(), $this->room($current->getLwsStorageId(), (int) $current->getSize()));
       $mediaType = $current->getMediaType() ?? 'application/octet-stream';
       $this->validate($content, $mediaType);
       $this->swap($current, $content, $mediaType, $metadata === NULL ? NULL : $current->getUserMetadata()->with($metadata));
@@ -400,13 +409,22 @@ final class StorageManager {
       if ($precondition !== NULL) {
         $precondition($current);
       }
-      $members = $current->isContainer() ? $this->resources->descendants($current, TRUE) : [];
-      if ($members !== [] && !$recursive) {
-        throw LwsHttpException::conflict('The container is not empty. Send "Depth: infinity" to delete it with its members.');
-      }
-      $limit = (int) $this->configFactory->get('lws_storage.settings')->get('max_recursive_delete');
-      if ($limit > 0 && count($members) > $limit) {
-        throw LwsHttpException::unprocessable(sprintf('The container holds %d resources, more than one request may delete (%d).', count($members), $limit));
+      $members = [];
+      if ($current->isContainer() && $this->resources->hasMembers($current)) {
+        if (!$recursive) {
+          throw LwsHttpException::conflict('The container is not empty. Send "Depth: infinity" to delete it with its members.');
+        }
+        // Counted before anything is loaded or locked, and checked again
+        // once it is. The count is not told: the agent may not see them all.
+        $limit = (int) $this->configFactory->get('lws_storage.settings')->get('max_recursive_delete');
+        $tooMany = LwsHttpException::unprocessable(sprintf('The container holds more resources than one request may delete (%d). Delete some of its members first.', $limit));
+        if ($limit > 0 && $this->resources->countDescendants($current, $limit + 1) > $limit) {
+          throw $tooMany;
+        }
+        $members = $this->resources->descendants($current, TRUE);
+        if ($limit > 0 && count($members) > $limit) {
+          throw $tooMany;
+        }
       }
       if ($mayDelete !== NULL) {
         foreach ($members as $member) {
@@ -469,6 +487,9 @@ final class StorageManager {
    *   With an integrity constraint violation when the name is taken.
    */
   private function insert(LwsResourceInterface $parent, string $name, string $uuid, ?StoredContent $content = NULL, string $mediaType = 'application/octet-stream', ?RequestingAgent $agent = NULL, ?UserMetadata $metadata = NULL): LwsResourceInterface {
+    if (mb_strlen($parent->getPath() . $name) > LwsResourceInterface::MAX_PATH_LENGTH) {
+      throw LwsHttpException::badRequest(sprintf('The resource would be nested too deeply: its path would be longer than %d characters.', LwsResourceInterface::MAX_PATH_LENGTH));
+    }
     $transaction = $this->database->startTransaction();
     try {
       // Update the parent first, which locks it: if a recursive delete
@@ -562,6 +583,26 @@ final class StorageManager {
       throw LwsHttpException::insufficientStorage();
     }
     $this->entityTypeManager->getStorage('lws_storage')->resetCache([$storageId]);
+  }
+
+  /**
+   * The bytes a storage's quota leaves room for; NULL for no quota.
+   *
+   * @param int $storageId
+   *   The storage.
+   * @param int $freed
+   *   The bytes the write frees, such as those of the content it replaces.
+   */
+  private function room(int $storageId, int $freed = 0): ?int {
+    $row = $this->database->select('lws_storage', 's')
+      ->fields('s', ['quota_bytes', 'used_bytes'])
+      ->condition('id', $storageId)
+      ->execute()
+      ?->fetchAssoc();
+    if (!is_array($row) || $row['quota_bytes'] === NULL) {
+      return NULL;
+    }
+    return max(0, (int) $row['quota_bytes'] - (int) $row['used_bytes'] + $freed);
   }
 
   /**

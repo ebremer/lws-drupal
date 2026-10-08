@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace Drupal\lws_storage;
 
+use Drupal\Core\Database\Connection;
 use Drupal\lws\Access\ResourceContext;
 use Drupal\lws\Routing\LwsUrlGenerator;
 use Drupal\lws_storage\Entity\LwsResourceInterface;
 use Drupal\lws_storage\Entity\LwsStorageInterface;
+use Drupal\lws_storage\Linkset\Linksets;
 use Ebremer\Lws\Http\LinkHeader;
 use Ebremer\Lws\LinkRelation;
 use Ebremer\Lws\MediaType;
@@ -21,6 +23,7 @@ final class ResourceLinks {
   public function __construct(
     private readonly LwsUrlGenerator $urls,
     private readonly StorageRegistry $storages,
+    private readonly Connection $database,
   ) {}
 
   /**
@@ -57,7 +60,11 @@ final class ResourceLinks {
       LinkHeader::format($this->type($resource), LinkRelation::TYPE),
     ];
     foreach ($resource->getUserMetadata()->types as $type) {
-      $links[] = LinkHeader::format($type, LinkRelation::TYPE);
+      // Checked when they were set; checked again, as a header is no place
+      // for anything else.
+      if (Linksets::isUri($type)) {
+        $links[] = LinkHeader::format($type, LinkRelation::TYPE);
+      }
     }
     $parent = $resource->getParent();
     if ($parent !== NULL) {
@@ -110,6 +117,71 @@ final class ResourceLinks {
    */
   public function contextOf(LwsStorageInterface $storage, LwsResourceInterface $resource): ResourceContext {
     return $this->context($storage, $resource->getSegments(), $resource->isContainer(), $resource);
+  }
+
+  /**
+   * The access contexts of many resources of one storage, as contextOf().
+   *
+   * For filtered listings, which judge members by the hundred: the storage's
+   * reference and URI, and the URIs of shared ancestors, are made once, and
+   * the media types are read in one query rather than through each file
+   * entity.
+   *
+   * @param \Drupal\lws_storage\Entity\LwsStorageInterface $storage
+   *   The storage.
+   * @param list<\Drupal\lws_storage\Entity\LwsResourceInterface> $resources
+   *   Resources of the storage.
+   *
+   * @return list<\Drupal\lws\Access\ResourceContext>
+   *   Their contexts, in the same order.
+   */
+  public function contextsOf(LwsStorageInterface $storage, array $resources): array {
+    $ref = $this->storages->ref($storage);
+    $fids = [];
+    foreach ($resources as $resource) {
+      $fid = (int) $resource->get('content')->target_id;
+      if ($fid > 0) {
+        $fids[] = $fid;
+      }
+    }
+    $mediaTypes = $fids === [] ? [] : $this->database->select('file_managed', 'f')
+      ->fields('f', ['fid', 'filemime'])
+      ->condition('fid', $fids, 'IN')
+      ->execute()
+      ?->fetchAllKeyed() ?? [];
+    $ancestors = [];
+    $contexts = [];
+    foreach ($resources as $resource) {
+      $segments = $resource->getSegments();
+      $parent = array_slice($segments, 0, -1);
+      $key = implode('/', $parent);
+      if (!isset($ancestors[$key])) {
+        $ancestors[$key] = [];
+        for ($i = 1; $i <= count($parent); $i++) {
+          $ancestors[$key][] = $ref->uri . self::path(array_slice($parent, 0, $i)) . '/';
+        }
+      }
+      $container = $resource->isContainer();
+      $contexts[] = new ResourceContext(
+        $ref,
+        $ref->uri . self::path($segments) . ($container ? '/' : ''),
+        $ancestors[$key],
+        $container,
+        $mediaTypes[(int) $resource->get('content')->target_id] ?? NULL,
+        $this->types($resource),
+      );
+    }
+    return $contexts;
+  }
+
+  /**
+   * The encoded path of segments below a storage URI.
+   *
+   * @param list<string> $segments
+   *   Decoded names.
+   */
+  private static function path(array $segments): string {
+    return implode('/', array_map(LwsUrlGenerator::encodeSegment(...), $segments));
   }
 
 }

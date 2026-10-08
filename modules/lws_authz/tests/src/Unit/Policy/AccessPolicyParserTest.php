@@ -87,8 +87,9 @@ final class AccessPolicyParserTest extends UnitTestCase {
     // In the profile's order, once each.
     $this->assertSame(['read', 'delete'], $policy->actions);
     $this->assertSame(ResourceType::CONTAINER, $policy->targetType);
-    // Canonical URIs: unreserved characters decoded.
-    $this->assertSame([self::STORAGE . 'root/a~b/', self::STORAGE . 'root/shared', self::STORAGE], $policy->targetValues);
+    // Canonical URIs: unreserved characters decoded, and a container named
+    // without its slash, as a policy for containers alone may name one.
+    $this->assertSame([self::STORAGE . 'root/a~b/', self::STORAGE . 'root/shared/', self::STORAGE], $policy->targetValues);
     $this->assertSame('image/png', $policy->constraints[0]->rightOperand[0] ?? NULL);
     $this->assertSame(ResourceType::DATA_RESOURCE, $policy->constraints[1]->rightOperand);
     $this->assertSame(strtotime('2026-12-31T23:59:59Z'), $policy->notAfter());
@@ -96,6 +97,16 @@ final class AccessPolicyParserTest extends UnitTestCase {
     $again = $this->parser->parse(Json::decode(Json::encode($policy->toJson())), new StorageRef(1, 'alice', self::STORAGE, []));
     $this->assertEquals($policy, $again);
     $this->assertSame('Container', $policy->toJson()['target']['type']);
+  }
+
+  /**
+   * Tests that a policy for any resource names one exactly.
+   */
+  public function testExactName(): void {
+    $policy = $this->parse(['target' => ['type' => 'StorageResource', 'value' => [self::STORAGE . 'root/notes']]]);
+    $this->assertSame([self::STORAGE . 'root/notes'], $policy->targetValues);
+    $policy = $this->parse(['target' => ['type' => 'DataResource', 'value' => [self::STORAGE . 'root/notes']]]);
+    $this->assertSame([self::STORAGE . 'root/notes'], $policy->targetValues);
   }
 
   /**

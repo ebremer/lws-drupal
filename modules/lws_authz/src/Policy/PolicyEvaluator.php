@@ -72,12 +72,15 @@ final class PolicyEvaluator {
 
   /**
    * Whether a policy's target values name a resource, or a container above.
+   *
+   * URIs are compared exactly: "notes" and "notes/" are two resources, which
+   * may both exist, so a policy on the one never covers the other, nor what
+   * is in it.
    */
   public static function covers(AccessPolicy $policy, ResourceContext $resource): bool {
     $scope = [$resource->uri, ...$resource->ancestors, $resource->storage->uri];
-    $scope = array_map(static fn (string $uri): string => rtrim($uri, '/'), $scope);
     foreach ($policy->targetValues as $value) {
-      if (in_array(rtrim($value, '/'), $scope, TRUE)) {
+      if (in_array($value, $scope, TRUE)) {
         return TRUE;
       }
     }

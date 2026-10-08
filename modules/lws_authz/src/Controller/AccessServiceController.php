@@ -15,6 +15,7 @@ use Drupal\lws\Agent\Authentication;
 use Drupal\lws\Agent\RequestingAgent;
 use Drupal\lws\Http\LwsHttpException;
 use Drupal\lws\Http\LwsResponse;
+use Drupal\lws\Http\RequestBody;
 use Drupal\lws\Http\MediaTypeNegotiator;
 use Drupal\lws\Http\PaginationCursor;
 use Drupal\lws\Routing\LwsTarget;
@@ -139,10 +140,7 @@ final class AccessServiceController implements ContainerInjectionInterface {
     if (!in_array($type, self::MEDIA_TYPES, TRUE)) {
       throw LwsHttpException::unsupportedMediaType('Send the document as application/lws+json.');
     }
-    $body = (string) $request->getContent();
-    if (strlen($body) > self::MAX_BYTES) {
-      throw LwsHttpException::contentTooLarge(self::MAX_BYTES);
-    }
+    $body = RequestBody::read($request, self::MAX_BYTES);
     try {
       $json = Json::decode($body);
     }

@@ -22,6 +22,11 @@ use Symfony\Component\HttpKernel\KernelEvents;
  * wildcard origin is safe and needs no "Vary: Origin".
  *
  * Core's site-wide CORS middleware can stay off.
+ *
+ * Every response under the prefix is also sandboxed, unless it sets a
+ * Content-Security-Policy of its own: nothing there is a page of this site,
+ * so a browser that renders one must give it no origin and run no script.
+ * Core already sends "X-Content-Type-Options: nosniff" with every response.
  */
 final class LwsCorsSubscriber implements EventSubscriberInterface {
 
@@ -92,6 +97,9 @@ final class LwsCorsSubscriber implements EventSubscriberInterface {
     }
     $headers = $event->getResponse()->headers;
     $headers->set('Access-Control-Allow-Origin', '*');
+    if (!$headers->has('Content-Security-Policy')) {
+      $headers->set('Content-Security-Policy', 'sandbox');
+    }
     $preflight = $request->isMethod('OPTIONS') && $request->headers->has('Access-Control-Request-Method');
     if (!$preflight) {
       $headers->set('Access-Control-Expose-Headers', implode(', ', self::EXPOSE_HEADERS));

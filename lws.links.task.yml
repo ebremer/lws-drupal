@@ -1,0 +1,4 @@
+lws.settings:
+  title: 'General'
+  route_name: lws.settings
+  base_route: lws.settings

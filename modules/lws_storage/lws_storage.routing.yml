@@ -194,3 +194,45 @@ lws_storage.access_request:
         type: entity:lws_storage
       lws_access:
         type: entity:lws_access
+
+lws_storage.settings:
+  path: '/admin/config/services/lws/storage'
+  defaults:
+    _form: '\Drupal\lws_storage\Form\StorageSettingsForm'
+    _title: 'Linked Web Storage'
+  requirements:
+    _permission: 'administer lws'
+
+# Makes a Media item from a copy of a data resource's content; see the
+# resource browser, a View in config/optional.
+lws_storage.resource_media:
+  path: '/admin/content/lws/{lws_storage}/resources/{lws_resource}/media'
+  defaults:
+    _form: '\Drupal\lws_storage\Form\ResourceMediaForm'
+    _title: 'Create media item'
+  requirements:
+    _custom_access: '\Drupal\lws_storage\Form\ResourceMediaForm::access'
+    lws_storage: '\d+'
+    lws_resource: '\d+'
+  options:
+    _admin_route: TRUE
+    parameters:
+      lws_storage:
+        type: entity:lws_storage
+      lws_resource:
+        type: entity:lws_resource
+
+# The resource browser: storage administrators only.
+lws_storage.resources:
+  path: '/admin/content/lws/{lws_storage}/resources'
+  defaults:
+    _controller: '\Drupal\lws_storage\Controller\ResourceBrowserController::page'
+    _title_callback: '\Drupal\lws_storage\Controller\ResourceBrowserController::title'
+  requirements:
+    _permission: 'administer lws storages'
+    lws_storage: '\d+'
+  options:
+    _admin_route: TRUE
+    parameters:
+      lws_storage:
+        type: entity:lws_storage

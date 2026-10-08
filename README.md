@@ -9,15 +9,17 @@ is in [DESIGN.md](DESIGN.md).
 |---|---|
 | `lws` | The LWS URL space under `/lws`, problem details, content negotiation, CORS, the guard on outbound requests, settings |
 | `lws_authz` | Access tokens: the site's own authorization server, trusted external ones, token validation, the access decision |
-| `lws_storage` | Storages and their resources: the storage description, containers, data resources, linksets, Drush commands |
+| `lws_storage` | Storages and their resources: the storage description, containers, data resources, linksets, the administration pages, Drush commands |
 
 ## Status
 
-**Step A4, access requests and grants** (DESIGN.md §10), after S1, storages,
-A1, access tokens, S2, data resources, S3, pagination, S4, metadata and JSON
-Patch, A2, the authorization server, and A3, access policies. Storages are created with Drush; everything in
-them is managed over HTTP, with access tokens the site issues itself, by their
-controllers and by the agents their access policies allow:
+**Step S5, hardening and the administration pages** (DESIGN.md §10), after S1,
+storages, A1, access tokens, S2, data resources, S3, pagination, S4, metadata
+and JSON Patch, A2, the authorization server, A3, access policies, and A4,
+access requests and grants. Storages are created at *Content › LWS storages*
+or with Drush; everything in them is managed over HTTP, with access tokens the
+site issues itself, by their controllers and by the agents their access
+policies allow:
 
 | Request | Response |
 |---|---|
@@ -41,11 +43,22 @@ controllers and by the agents their access policies allow:
 | No token, or a rejected one | `401` with a Bearer challenge: `as_uri` (the authorization server), `realm` (the storage) and, for a rejected token, `error` |
 | A valid token, but no policy allows it | `403`, or `404` with `lws.settings:conceal_existence` |
 | Over the storage's quota | `507` |
+| A body larger than the largest content, or than PHP's `post_max_size` for a `POST` | `413`, before any of it is read |
+| A body shorter than its `Content-Length` | `400`: nothing is kept |
 
 Successful responses carry `ETag` and `Link` headers (storage, type, parent,
-linkset), and errors are RFC 9457 problem details. Content is kept as managed
-files in the private file system and never served through Drupal's own file
-routes.
+linkset), and errors are RFC 9457 problem details. Every response in the LWS URL
+space is sandboxed (`Content-Security-Policy: sandbox`). Content is kept as
+managed files in the private file system and never served through Drupal's own
+file routes, except to storage administrators, as attachments.
+
+Listings show each agent only what it may read. An agent who may not read
+everything in a container gets a page of its own: its `ETag` is of what it sees,
+it has no `Last-Modified`, and a page examines at most 1,000 members
+(`$settings['lws_storage_scan_limit']`), so it may hold fewer than the page
+size and go on with `next`. Its `totalItems` counts the visible members among
+the first 1,000, never more than there are (LWS Core §8.1 lets it be
+approximate).
 
 ```sh
 drush lws:storage:create alice --controller=https://id.example/alice --quota=1000000000 --page-size=50
@@ -55,6 +68,25 @@ drush lws:storage:list
 drush lws:storage:delete alice
 drush lws:gc                                           # sweep unreferenced content
 ```
+
+## Administration
+
+| Page | What it does |
+|---|---|
+| *Content › LWS storages* (`/admin/content/lws`) | The storages: all of them for storage administrators, and their own for owners with *Manage own LWS storages* |
+| `/admin/content/lws/add`, `/admin/content/lws/{id}` | Add or edit a storage: label, slug (fixed once made), controllers, owner, authorization server, quota (such as `10 GB`), page size, whether changes need `If-Match`, and whether it is enabled |
+| `/admin/content/lws/{id}/access` | Who may do what in it ([Sharing](#sharing)) |
+| `/admin/content/lws/{id}/resources` | A read-only resource browser, which is a View (`lws_resources`, with Views): path, kind, media type, size, creator, and *Download* and *Create media item* |
+| `/admin/content/lws/{id}/delete` | Deletes it with everything in it; a large storage is blocked first and emptied in a batch |
+| *Configuration › Web services › Linked Web Storage* | The base URL, path prefix and concealment; on the *Storages* tab, where content goes, the largest content, the largest recursive delete, the page size and whether changes need `If-Match` |
+
+*Create media item* (with Media) copies a data resource's content into a new,
+unpublished Media item of a type made from a file. The copy is the site's: later
+changes to the resource or to who may access it do not change it.
+
+Creating storages, and everything else here but the access page, needs
+*Administer LWS storages*. Whether users may create storages of their own is an
+open question (DESIGN.md §14, Q2).
 
 ## Sharing
 
@@ -205,9 +237,20 @@ SIMPLETEST_DB=sqlite://localhost//tmp/lws-test.sqlite vendor/bin/phpunit -c web/
   under `private://lws/`; until it is set they cannot be created, and the status
   report says so. Another stream wrapper can be chosen with
   `lws_storage.settings:scheme`.
-- **Request size.** `lws_storage.settings:max_upload_bytes` caps one upload
-  (`413`); PHP's `post_max_size` and the web server's body limit still apply to
-  `POST`.
+- **Serve LWS over HTTPS.** Access tokens are bearer tokens. The status report
+  counts plain HTTP as an error, except on a loopback host.
+- **Request size.** *Largest content* (`lws_storage.settings:max_upload_bytes`)
+  caps one write, and is refused with `413` before any of it is read. PHP's
+  `post_max_size` limits `POST`, which creates, but not `PUT`, which replaces;
+  the web server's body limit (Apache's `LimitRequestBody`, 1 GB by default)
+  limits both. The status report warns when no largest content is set, or when
+  it is larger than `post_max_size`.
+- **Keep content out of the web server's reach.** The status report counts
+  content in the public file system as an error: anyone who learned a file's
+  location could download it, whatever LWS policy says.
+- **Let clients find the authorization server.** The status report fetches
+  `/.well-known/lws-configuration` from the issuer, as clients do, and warns if
+  a proxy or the web server does not pass it to Drupal.
 - **Run cron,** which deletes the files of recursively deleted resources and of
   deleted storages.
 - **Web servers refuse some paths before Drupal sees them:**

@@ -17,6 +17,7 @@ use Drupal\Core\Url;
 use Drupal\lws_authz\AccessService\AccessRecords;
 use Drupal\lws_authz\Policy\AccessPolicy;
 use Drupal\lws_authz\Policy\PolicyStore;
+use Drupal\lws_storage\LwsStorageAccessControlHandler;
 use Drupal\lws_storage\StorageRegistry;
 use Drupal\lws_storage\Entity\LwsStorageInterface;
 use Drupal\lws_storage\Form\ShareForm;
@@ -47,9 +48,7 @@ final class StorageAccessController implements ContainerInjectionInterface {
    */
   public static function access(AccountInterface $account, LwsStorageInterface $lws_storage): AccessResultInterface {
     return AccessResult::allowedIfHasPermission($account, 'administer lws storages')
-      ->orIf(AccessResult::allowedIf(
-        $account->hasPermission('manage own lws storages') && $account->id() > 0 && (int) $account->id() === $lws_storage->getOwnerId(),
-      )->cachePerUser()->addCacheableDependency($lws_storage));
+      ->orIf(LwsStorageAccessControlHandler::owns($account, $lws_storage));
   }
 
   /**
