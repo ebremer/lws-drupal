@@ -31,6 +31,23 @@ final class LwsHttpException extends HttpException {
   }
 
   /**
+   * Creates a 406 Not Acceptable error.
+   *
+   * @param list<string> $offered
+   *   The media types the resource is available in.
+   */
+  public static function notAcceptable(array $offered): self {
+    return new self(406, 'Available as ' . implode(', ', $offered) . '.');
+  }
+
+  /**
+   * Creates a 503 Service Unavailable error.
+   */
+  public static function serviceUnavailable(string $detail): self {
+    return new self(503, $detail);
+  }
+
+  /**
    * The error for a target at which nothing can exist.
    */
   public static function forUnaddressable(LwsTarget $target): self {

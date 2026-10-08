@@ -18,6 +18,9 @@ composer config --no-plugins allow-plugins.phpstan/extension-installer true
 composer config --no-plugins allow-plugins.symfony/runtime true
 composer config --no-plugins allow-plugins.tbachert/spi false
 
-composer require 'ebremer/lws-drupal:*@dev' --no-update
-composer require --dev 'drupal/core-dev:^11' --no-update
+# ebremer/lws-client is not on Packagist yet and has no release, so the site
+# itself names its repository and requires the branch.
+composer config repositories.lws-client vcs https://github.com/ebremer/lws-client
+composer require 'ebremer/lws-client:dev-main' 'ebremer/lws-drupal:*@dev' --no-update
+composer require --dev 'drupal/core-dev:^11' 'drush/drush:^13' --no-update
 composer update --no-interaction --no-progress

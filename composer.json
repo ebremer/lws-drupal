@@ -14,9 +14,16 @@
         "issues": "https://github.com/ebremer/lws-drupal/issues",
         "source": "https://github.com/ebremer/lws-drupal"
     },
+    "repositories": [
+        {
+            "type": "vcs",
+            "url": "https://github.com/ebremer/lws-client"
+        }
+    ],
     "require": {
         "php": ">=8.3",
-        "drupal/core": "^11.1"
+        "drupal/core": "^11.3",
+        "ebremer/lws-client": "dev-main"
     },
     "extra": {
         "installer-name": "lws"

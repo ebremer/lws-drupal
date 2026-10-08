@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Drupal\lws\EventSubscriber;
 
+use Drupal\Core\ParamConverter\ParamNotConvertedException;
 use Drupal\Core\Utility\Error;
 use Drupal\lws\Http\LwsHttpException;
 use Drupal\lws\Http\ProblemResponse;
@@ -52,6 +53,11 @@ final class LwsExceptionSubscriber implements EventSubscriberInterface {
     if ($exception instanceof HttpExceptionInterface) {
       $status = $exception->getStatusCode();
       $headers = $exception->getHeaders();
+    }
+    // A storage that does not exist. Core turns this into a 404 too, but only
+    // later, at a lower priority.
+    if ($exception instanceof ParamNotConvertedException) {
+      $status = 404;
     }
     if ($status >= 500) {
       Error::logException($this->logger, $exception);

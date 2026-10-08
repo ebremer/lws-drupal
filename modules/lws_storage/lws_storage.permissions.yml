@@ -1,0 +1,4 @@
+administer lws storages:
+  title: 'Administer LWS storages'
+  description: 'Create, block and delete any storage, and manage everything in it.'
+  restrict access: true

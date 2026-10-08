@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Drupal\lws\Routing;
 
-use Drupal\Component\Utility\Unicode;
 use Drupal\Core\Config\ConfigFactoryInterface;
 
 /**
@@ -34,7 +33,7 @@ final class LwsUrlParser {
   /**
    * A storage slug.
    */
-  private const SLUG = '/^[a-z0-9][a-z0-9-]{0,62}$/';
+  public const SLUG = '/^[a-z0-9][a-z0-9-]{0,62}$/';
 
   /**
    * A lower-case UUID, which names a linkset resource.
@@ -155,26 +154,10 @@ final class LwsUrlParser {
    *   Why the segment cannot name a resource, or NULL if it can.
    */
   private function segmentError(string $segment): ?string {
-    if ($segment === '') {
-      return 'The path has an empty segment.';
-    }
-    if (!preg_match(self::SEGMENT, $segment)) {
+    if ($segment !== '' && !preg_match(self::SEGMENT, $segment)) {
       return 'The path has a character that must be percent-encoded, or a malformed percent-encoding.';
     }
-    $name = rawurldecode($segment);
-    if ($name === '.' || $name === '..') {
-      return 'The path has a dot segment.';
-    }
-    if (str_contains($name, '/')) {
-      return 'A resource name cannot contain an encoded slash.';
-    }
-    if (!Unicode::validateUtf8($name)) {
-      return 'A resource name must be UTF-8.';
-    }
-    if (preg_match('/[\x00-\x1F\x7F]/', $name)) {
-      return 'A resource name cannot contain control characters.';
-    }
-    return NULL;
+    return ResourceName::syntaxError(rawurldecode($segment));
   }
 
 }

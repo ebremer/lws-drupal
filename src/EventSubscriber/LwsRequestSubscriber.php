@@ -20,8 +20,10 @@ use Symfony\Component\HttpKernel\KernelEvents;
  *   LWS names a different resource. Malformed LWS paths get 400 instead.
  * - OPTIONS: core's OptionsRequestSubscriber answers every OPTIONS request
  *   with the methods of all routes on the internal path. LWS answers with the
- *   methods of the addressed resource. OPTIONS is never authenticated:
- *   browsers send CORS preflight requests without credentials.
+ *   methods for the kind of resource the URL addresses. OPTIONS is never
+ *   authenticated, since browsers send CORS preflight requests without
+ *   credentials, so the answer comes from the shape of the URL alone: looking
+ *   the resource up would let anyone probe which resources exist.
  */
 final class LwsRequestSubscriber implements EventSubscriberInterface {
 

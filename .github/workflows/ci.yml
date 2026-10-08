@@ -44,4 +44,4 @@ jobs:
         env:
           SIMPLETEST_DB: sqlite://localhost//tmp/lws-test.sqlite
           SIMPLETEST_BASE_URL: http://localhost
-        run: vendor/bin/phpunit -c web/core web/modules/contrib/lws/tests
+        run: vendor/bin/phpunit -c web/core web/modules/contrib/lws

@@ -9,7 +9,7 @@ specifications define around them.
 | **Status** | Draft for review. Nothing is implemented yet |
 | **Date** | 2026-10-07 |
 | **Spec baseline** | LWS Core **W3C Working Draft, 5 October 2026** ([`WD-lws10-core-20261005`](https://www.w3.org/TR/2026/WD-lws10-core-20261005/)), the text of `w3c/lws-protocol` @ `ef02548` ("Switch baseline PATCH format from JSON Merge Patch to JSON Patch", #255). The companion drafts as they stood at that commit; see [§2](#2-specification-baseline) |
-| **Target platform** | Drupal `^11.1` (PHP 8.3+, Symfony 7). Avoids APIs deprecated for Drupal 12 |
+| **Target platform** | Drupal `^11.3` (PHP 8.3+, Symfony 7). Avoids APIs deprecated for Drupal 12 |
 | **How to review** | Decisions that need your sign-off are tagged **[D1]…[D15]** and gathered in [§13](#13-decisions-for-review). Open questions are in [§14](#14-open-questions) |
 
 ---
@@ -310,11 +310,14 @@ per project, and must not be exported with site config.
 | `label` | string | |
 | `controllers` | string (URI), multiple | *Storage controllers* (agents) with full control |
 | `owner` | entity ref → `user`, optional | Drupal user who administers it in the UI |
-| `root` | entity ref → `lws_resource` | Created with the storage |
 | `authorization_server` | string | `local`, or the id of an `lws_trusted_as` config entity; supplies `as_uri` |
 | `quota_bytes`, `used_bytes` | integer | `507` when exceeded |
 | `settings` | map | Page size, `require_if_match`, `conceal_existence`, … (defaults come from `lws_storage.settings`) |
 | `status`, `created`, `changed` | | A blocked storage answers `503` |
+
+The root container is not a field: it is the storage's resource with no parent, created in the
+same transaction as the storage. S1 implements `slug`, `label`, `controllers`, `owner`, `status`,
+`created` and `changed`; the other fields arrive with the steps that use them (A1, S2, S3).
 
 **`lws_resource`** is a content entity, not revisionable in 1.0, and has no bundles.
 
@@ -335,6 +338,11 @@ per project, and must not be exported with site config.
 | `links_version` | integer | Feeds the linkset ETag |
 | `created`, `changed`, `meta_changed` | timestamp | `changed` feeds `Last-Modified` and `modified` in listings |
 | `creator`, `creator_client` | string (URI) | Audit only. Never used for access decisions |
+
+S1 implements `storage`, `parent`, `name`, `path`, `path_hash`, `kind`, `version`, `created` and
+`changed`. The content fields and `creator` arrive with S2, and `types` and the `links` fields with
+S4. A container's `version` is incremented with an SQL expression (`version + 1`) inside the
+transaction that changes its membership, so concurrent creates in one container are all counted.
 
 A custom `SqlContentEntityStorageSchema` adds the unique and prefix indexes. Name and path columns
 use `'binary' => TRUE`, so on MySQL they get `utf8mb4_bin`: LWS URIs are case-sensitive, and the
@@ -360,7 +368,7 @@ Every write is one database transaction. The table maps each operation to its HT
 | **Write preconditions** | `If-Match`, `If-None-Match`, `If-Unmodified-Since` → `412`, evaluated in RFC 9110 §13.2.2 order *inside* the transaction against a row locked with `SELECT … FOR UPDATE`. Optional per-storage `require_if_match` → `428` (off by default; see [§12](#12-spec-interpretation-decisions)) |
 | **Linkset** `GET/HEAD meta/{uuid}` | `application/linkset+json`, `{"linkset":[{"anchor":"<resource URI>", …}]}`. Includes the server-managed `up` and `type` and the user relations. `ETag`; `Allow: GET, HEAD, PUT, PATCH, OPTIONS`; `Accept-Patch: application/json-patch+json, application/merge-patch+json` (§9.1) |
 | **Linkset** `PATCH` / `PUT` | A JSON Patch applies to the **document a GET returns** (`/linkset/0/license`), not to the storage form. The result must still be a linkset for the same anchor (`422` otherwise). Changes to server-managed relations (`up`, `linkset`, `lws#storage`, the LWS class `type`s) → `409`. `412` on a failed precondition (§9.4). The linkset is deleted with its resource |
-| **`OPTIONS`** | `204` with `Allow` and `Accept-Patch` for that resource kind. Unauthenticated, as CORS preflight requires |
+| **`OPTIONS`** | `204` with `Allow` and `Accept-Patch` for that resource kind. Unauthenticated, as CORS preflight requires, so it is answered from the shape of the URL alone: it never reveals whether a resource exists |
 | **Errors** | `application/problem+json` (RFC 9457) everywhere |
 
 ETags are opaque and strong:
@@ -446,8 +454,10 @@ LWS clients always read content through its LWS URL.
    `LwsRouteEnhancer` gives the controller `$lws_target`
    ([§4.2](#42-routing-variable-depth-paths-in-drupal)). Malformed paths and `OPTIONS` were already
    answered by `LwsRequestSubscriber`.
-4. **Parameter conversion.** A converter loads the storage and the target resource for
-   `$lws_target`. For `POST` the target must be a container.
+4. **Parameter conversion.** `LwsRouteEnhancer` runs ahead of core's parameter conversion and
+   supplies the storage slug. The `lws_storage` converter loads the storage: `404` if there is
+   none, `503` if it is blocked. The resource itself is looked up through `ResourceRepository`, by
+   the controller and, from A1, by the access check. For `POST` the target must be a container.
 5. **Access** (`_lws_access`).
    1. A token that was present but invalid → `401` with `error="invalid_token"`, even on public
       resources (§5.2.4.2).
@@ -1099,6 +1109,29 @@ merge with passing tests; the build order is at the end of this section.
   `Model\StorageDescription::parse()` and that the root listing validates through
   `ContainerPage::parse()`.
 
+**Done.** Differences from the plan above:
+
+- **More was built:**
+  - content negotiation for descriptions and containers, with the requested profile echoed;
+  - container listings with members (no pagination yet; that is S3);
+  - `lws:storage:list` and `lws:storage:delete`;
+  - the settings form, and status-report checks for the base URL, a shared host and the private
+    file system;
+  - blocked storages answering `503`.
+- **Built differently:**
+  - the root is the resource with no parent, not a `root` field;
+  - storages are converted by a route parameter converter, and resources are looked up by the
+    controller;
+  - kernel tests drive requests through the HTTP kernel; there is no test-only authentication
+    provider yet, because nothing checks access before A1.
+- **lws-client (Q4: reuse):** the server uses its `MediaType`, `LinkRelation`, `ResourceType`,
+  `ServiceType`, `Vocabulary` and `Http\LinkHeader`, replacing the module's own constants and
+  formatter. Tests parse the server's responses with its `StorageDescription` and `ContainerPage`.
+- **Verified:** 123 tests; and through Apache with Drush, curl and the PHP LWS client itself
+  (`discoverStorage`, `getStorageDescription`, `readContainer`, `listContainer`).
+- **Requirement raised to Drupal 11.3**, for `#[Hook('runtime_requirements')]` and the
+  `RequirementSeverity` enum.
+
 **S2. Data resources and containers (create, read, replace, delete).**
 
 - **Scope:**
@@ -1336,7 +1369,7 @@ makes. Where `lws-server` (the Java implementation) chose differently, that is n
 | **D6** | Policy scope | Recursive over containment |
 | **D7** | `purpose` | Fail closed |
 | **D8** | Hosting | Recommend a separate cookie-less hostname for LWS; always send `CSP: sandbox` |
-| **D9** | PHP LWS client | Runtime dependency for primitives, with upstream additions: `JsonPatch::apply`, RSA verification, `WebhookSigner`, Packagist |
+| **D9** | PHP LWS client | Runtime dependency for primitives, with upstream additions: `JsonPatch::apply`, RSA verification, `WebhookSigner`, Packagist. **Decided: reuse** (Q4) |
 | **D10** | Entities over custom tables | Content entities for storages, resources, policies, grants, requests and subscriptions. This gives Views, admin UI and hooks; hot paths use direct SQL where the entity query is too slow |
 | **D11** | Content storage | Managed `file` entities, one per content version, in a stream wrapper (`private://` by default). Atomic reference swap; usage-aware deletion; core file validators apply; direct `/system/files` downloads denied |
 | **D12** | Cookies on LWS routes | Never; `lws_bearer` only |
@@ -1357,9 +1390,9 @@ makes. Where `lws-server` (the Java implementation) chose differently, that is n
 3. **Q3. Should Drupal also be an identity provider?** `lws_identity` (CID documents for users,
    with OpenID through `simple_oauth`) would make the site a complete stack. Is that in scope, or
    is the Keycloak `lws-authn` the IdP?
-4. **Q4. Coupling to `ebremer/lws-client`.** Are you happy to add `JsonPatch::apply()`, RSA
-   verification and a `WebhookSigner` to the client, and to publish it on Packagist? Otherwise the
-   server uses `web-token/jwt-library` and its own JSON Patch.
+4. **Q4. Coupling to `ebremer/lws-client`.** *Decided 2026-10-08: reuse it.* The client still
+   needs `JsonPatch::apply()` (by S4), RSA verification (by A5), a `WebhookSigner` (by S6), and a
+   tagged release on Packagist (before a drupal.org release).
 5. **Q5. Separate storage hostname.** Should it be a hard requirement, or a recommendation with a
    status-report warning (as designed)?
 6. **Q6. DPoP.** `lws-server` supports DPoP-bound tokens. Is DPoP wanted for 1.0, or later (A6)?

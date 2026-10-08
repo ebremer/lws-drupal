@@ -93,7 +93,10 @@ final class LwsTarget {
   }
 
   /**
-   * The methods the target supports, for Allow headers.
+   * The methods for the kind of resource the target addresses.
+   *
+   * Depends only on the shape of the URL, never on whether the resource
+   * exists, so that OPTIONS cannot reveal existence.
    *
    * @return list<string>
    *   HTTP method names.

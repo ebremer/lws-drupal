@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Drupal\lws\Http;
 
-use Drupal\lws\Lws;
+use Ebremer\Lws\MediaType;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -36,7 +36,7 @@ final class ProblemResponse {
     if ($instance !== NULL) {
       $body['instance'] = $instance;
     }
-    $headers['Content-Type'] = Lws::MEDIA_TYPE_PROBLEM;
+    $headers['Content-Type'] = MediaType::PROBLEM_JSON;
     $headers['Cache-Control'] = 'no-store';
     return new Response(
       json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),

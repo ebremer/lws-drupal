@@ -25,11 +25,19 @@ services:
     class: Drupal\lws\Routing\LwsRouteEnhancer
     arguments: ['@lws.url_parser']
     tags:
-      - { name: route_enhancer }
+      # Ahead of route_enhancer.param_conversion (5000), which converts the
+      # lws_storage slug this adds.
+      - { name: route_enhancer, priority: 6000 }
 
   lws.request_subscriber:
     class: Drupal\lws\EventSubscriber\LwsRequestSubscriber
     arguments: ['@lws.url_parser']
+    tags:
+      - { name: event_subscriber }
+
+  lws.config_subscriber:
+    class: Drupal\lws\EventSubscriber\LwsConfigSubscriber
+    arguments: ['@cache_tags.invalidator']
     tags:
       - { name: event_subscriber }
 

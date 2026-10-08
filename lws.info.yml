@@ -2,4 +2,5 @@ name: 'Linked Web Storage'
 type: module
 description: 'Shared API for the W3C Linked Web Storage (LWS) 1.0 modules: the LWS URL space, protocol primitives and error responses.'
 package: 'Linked Web Storage'
-core_version_requirement: ^11.1
+core_version_requirement: ^11.3
+configure: lws.settings

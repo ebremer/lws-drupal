@@ -1,0 +1,4 @@
+administer lws:
+  title: 'Administer Linked Web Storage'
+  description: 'Change the canonical base URL and the path prefix of the LWS URL space.'
+  restrict access: true

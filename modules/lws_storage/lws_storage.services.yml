@@ -1,0 +1,29 @@
+services:
+  lws_storage.resource_repository:
+    class: Drupal\lws_storage\ResourceRepository
+    arguments: ['@entity_type.manager', '@database', '@datetime.time']
+  Drupal\lws_storage\ResourceRepository: '@lws_storage.resource_repository'
+
+  lws_storage.storage_manager:
+    class: Drupal\lws_storage\StorageManager
+    arguments: ['@entity_type.manager', '@database', '@lws_storage.resource_repository']
+  Drupal\lws_storage\StorageManager: '@lws_storage.storage_manager'
+
+  lws_storage.description_builder:
+    class: Drupal\lws_storage\StorageDescriptionBuilder
+    arguments: ['@lws.url_generator']
+    tags:
+      - { name: service_collector, tag: lws.storage_service, call: addService }
+  Drupal\lws_storage\StorageDescriptionBuilder: '@lws_storage.description_builder'
+
+  lws_storage.storage_root_service:
+    class: Drupal\lws_storage\StorageRootService
+    tags:
+      # First in the description's service set.
+      - { name: lws.storage_service, priority: 1000 }
+
+  lws_storage.param_converter:
+    class: Drupal\lws_storage\ParamConverter\LwsStorageConverter
+    arguments: ['@entity_type.manager']
+    tags:
+      - { name: paramconverter }

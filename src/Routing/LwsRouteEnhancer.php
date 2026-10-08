@@ -11,7 +11,11 @@ use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 use Symfony\Component\Routing\Route;
 
 /**
- * Gives LWS controllers the target of the request as $lws_target.
+ * Gives LWS routes the target of the request.
+ *
+ * Adds $lws_target, the parsed URL, and $lws_storage, the storage slug, which
+ * routes declaring an "lws_storage" parameter have converted to the storage
+ * entity. This runs ahead of parameter conversion for that reason.
  *
  * The URL is parsed here, after routing, rather than in LwsPathProcessor:
  * route enhancers run on every request, while path processors are skipped
@@ -32,7 +36,7 @@ final class LwsRouteEnhancer implements EnhancerInterface {
    *   The request.
    *
    * @return array<string, mixed>
-   *   The defaults, with 'lws_target' added on LWS routes.
+   *   The defaults, with 'lws_target' and 'lws_storage' added on LWS routes.
    */
   public function enhance(array $defaults, Request $request) {
     $route = $defaults[RouteObjectInterface::ROUTE_OBJECT] ?? NULL;
@@ -45,6 +49,9 @@ final class LwsRouteEnhancer implements EnhancerInterface {
       throw new NotFoundHttpException();
     }
     $defaults['lws_target'] = $target;
+    if ($target->storage !== NULL) {
+      $defaults['lws_storage'] = $target->storage;
+    }
     return $defaults;
   }
 

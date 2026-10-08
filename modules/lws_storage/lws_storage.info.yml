@@ -1,0 +1,7 @@
+name: 'LWS Storage'
+type: module
+description: 'Serves W3C Linked Web Storage (LWS) storages: the storage description, containers and resources.'
+package: 'Linked Web Storage'
+core_version_requirement: ^11.3
+dependencies:
+  - lws:lws

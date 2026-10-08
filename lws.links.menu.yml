@@ -1,0 +1,5 @@
+lws.settings:
+  title: 'Linked Web Storage'
+  description: 'The canonical base URL and path prefix of LWS storages.'
+  route_name: lws.settings
+  parent: system.admin_config_services
