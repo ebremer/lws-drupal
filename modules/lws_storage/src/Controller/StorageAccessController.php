@@ -14,8 +14,10 @@ use Drupal\Core\Session\AccountInterface;
 use Drupal\Core\StringTranslation\StringTranslationTrait;
 use Drupal\Core\StringTranslation\TranslatableMarkup;
 use Drupal\Core\Url;
+use Drupal\lws_authz\AccessService\AccessRecords;
 use Drupal\lws_authz\Policy\AccessPolicy;
 use Drupal\lws_authz\Policy\PolicyStore;
+use Drupal\lws_storage\StorageRegistry;
 use Drupal\lws_storage\Entity\LwsStorageInterface;
 use Drupal\lws_storage\Form\ShareForm;
 
@@ -23,7 +25,9 @@ use Drupal\lws_storage\Form\ShareForm;
  * The access page of a storage: who may do what in it (DESIGN.md §6.5).
  *
  * Its controllers may do anything, and need no policy. Everyone else may do
- * what the policies listed here permit.
+ * what the policies listed here permit, which administrators add here and
+ * controllers by granting access over LWS. Access requests wait here to be
+ * approved, which grants them, or denied.
  */
 final class StorageAccessController implements ContainerInjectionInterface {
 
@@ -32,6 +36,8 @@ final class StorageAccessController implements ContainerInjectionInterface {
 
   public function __construct(
     private readonly PolicyStore $policies,
+    private readonly AccessRecords $records,
+    private readonly StorageRegistry $storages,
     private readonly FormBuilderInterface $formBuilder,
     private readonly DateFormatterInterface $dateFormatter,
   ) {}
@@ -66,8 +72,53 @@ final class StorageAccessController implements ContainerInjectionInterface {
       '#items' => $lws_storage->getControllers(),
       '#empty' => $this->t('None.'),
     ];
+    $ref = $this->storages->ref($lws_storage);
+    $requests = [];
+    foreach ($this->records->pending((int) $lws_storage->id()) as $request) {
+      $asked = [];
+      foreach ($request->getDocument()['access'] ?? [] as $policy) {
+        $asked[] = sprintf('%s: %s', implode(', ', (array) ($policy['action'] ?? [])), implode(' ', (array) ($policy['target']['value'] ?? [])));
+      }
+      $requests[] = [
+        (string) $request->getCreator(),
+        ['data' => ['#theme' => 'item_list', '#items' => $asked]],
+        $this->dateFormatter->format((int) $request->get('created')->value, 'short'),
+        [
+          'data' => [
+            '#type' => 'operations',
+            '#links' => [
+              'approve' => [
+                'title' => $this->t('Approve'),
+                'url' => Url::fromRoute('lws_storage.access_request', [
+                  'lws_storage' => $lws_storage->id(),
+                  'lws_access' => $request->id(),
+                  'decision' => 'approve',
+                ]),
+              ],
+              'deny' => [
+                'title' => $this->t('Deny'),
+                'url' => Url::fromRoute('lws_storage.access_request', [
+                  'lws_storage' => $lws_storage->id(),
+                  'lws_access' => $request->id(),
+                  'decision' => 'deny',
+                ]),
+              ],
+            ],
+          ],
+        ],
+      ];
+    }
+    $build['requests'] = [
+      '#type' => 'table',
+      '#caption' => $this->t('Access requests'),
+      '#header' => [$this->t('From'), $this->t('Asks to'), $this->t('Submitted'), $this->t('Operations')],
+      '#rows' => $requests,
+      '#empty' => $this->t('No access requests are waiting.'),
+    ];
+
     $rows = [];
     foreach ($this->policies->forStorage((int) $lws_storage->id()) as $id => $entity) {
+      $grant = $this->records->grantOf($ref, $entity->getSource());
       $policy = $entity->toAccessPolicy();
       $rows[] = [
         self::assignee($policy->assignee),
@@ -80,14 +131,14 @@ final class StorageAccessController implements ContainerInjectionInterface {
           ],
         ],
         implode('; ', array_map(static fn ($constraint): string => sprintf('%s %s %s', $constraint->leftOperand, $constraint->operator, implode(', ', (array) $constraint->rightOperand)), $policy->constraints)),
-        $entity->getSource(),
+        $grant === NULL ? $entity->getSource() : $this->records->uri($ref, $grant),
         $this->dateFormatter->format((int) $entity->get('created')->value, 'short'),
         [
           'data' => [
             '#type' => 'operations',
             '#links' => [
               'delete' => [
-                'title' => $this->t('Remove'),
+                'title' => $grant === NULL ? $this->t('Remove') : $this->t('Revoke the grant'),
                 'url' => Url::fromRoute('lws_storage.access_delete', [
                   'lws_storage' => $lws_storage->id(),
                   'lws_policy' => $id,

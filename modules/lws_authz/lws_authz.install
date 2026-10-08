@@ -19,3 +19,16 @@ function lws_authz_update_11001(): string {
   $updates->installEntityType($type);
   return 'Installed access policies.';
 }
+
+/**
+ * Adds the access request and grant entity type (step A4).
+ */
+function lws_authz_update_11002(): string {
+  $updates = \Drupal::entityDefinitionUpdateManager();
+  if ($updates->getEntityType('lws_access') !== NULL) {
+    return 'Access requests and grants were already installed.';
+  }
+  $updates->installEntityType(\Drupal::entityTypeManager()->getDefinition('lws_access'));
+  \Drupal::configFactory()->getEditable('lws_authz.settings')->set('rate_limits.access_requests', 30)->save();
+  return 'Installed access requests and grants.';
+}

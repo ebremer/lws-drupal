@@ -24,6 +24,25 @@ final class LwsHttpException extends HttpException {
   }
 
   /**
+   * Creates a 403 Forbidden error.
+   *
+   * For an agent with no valid token it becomes a 401 challenge.
+   */
+  public static function forbidden(string $detail): self {
+    return new self(403, $detail);
+  }
+
+  /**
+   * Creates a 429 Too Many Requests error.
+   *
+   * @param int $retryAfter
+   *   The seconds after which the client may try again.
+   */
+  public static function tooManyRequests(int $retryAfter): self {
+    return new self(429, 'Too many requests; try again later.', NULL, ['Retry-After' => (string) $retryAfter]);
+  }
+
+  /**
    * Creates a 404 Not Found error.
    */
   public static function notFound(string $detail = ''): self {

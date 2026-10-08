@@ -79,6 +79,20 @@ final class LwsUrlGenerator {
   }
 
   /**
+   * The URI of an access service, or of one of its entries (LWS Core §11).
+   *
+   * @param string $storage
+   *   The storage slug.
+   * @param string $service
+   *   The service: "requests" or "grants".
+   * @param string|null $id
+   *   The UUID of an entry; NULL for the service.
+   */
+  public function accessUri(string $storage, string $service, ?string $id = NULL): string {
+    return $this->storageUri($storage) . 'access/' . $service . '/' . ($id ?? '');
+  }
+
+  /**
    * The URI of a resource's linkset.
    *
    * @param string $storage
@@ -101,6 +115,7 @@ final class LwsUrlGenerator {
       LwsArea::Description => $this->storageUri($target->storage),
       LwsArea::Resource => $this->resourceUri($target->storage, $target->segments, $target->container),
       LwsArea::Meta => $this->metaUri($target->storage, (string) $target->metaId),
+      LwsArea::Access => $this->accessUri($target->storage, (string) $target->service, $target->recordId),
       LwsArea::Unknown, LwsArea::Malformed => NULL,
     };
   }

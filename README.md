@@ -13,9 +13,9 @@ is in [DESIGN.md](DESIGN.md).
 
 ## Status
 
-**Step A3, access policies** (DESIGN.md §10), after S1, storages, A1, access
-tokens, S2, data resources, S3, pagination, S4, metadata and JSON Patch, and
-A2, the authorization server. Storages are created with Drush; everything in
+**Step A4, access requests and grants** (DESIGN.md §10), after S1, storages,
+A1, access tokens, S2, data resources, S3, pagination, S4, metadata and JSON
+Patch, A2, the authorization server, and A3, access policies. Storages are created with Drush; everything in
 them is managed over HTTP, with access tokens the site issues itself, by their
 controllers and by the agents their access policies allow:
 
@@ -31,6 +31,10 @@ controllers and by the agents their access policies allow:
 | `GET`, `PUT`, `PATCH /lws/{storage}/meta/{uuid}` | The linkset of a resource (`application/linkset+json`): its parent and types, and the links clients manage. Server-managed links cannot change (`409`) |
 | `Link` headers on `POST`; with `Prefer: set-linkset`, on `PUT` and `PATCH` | Set the links clients manage, such as types (`rel="type"`) and licenses |
 | `If-Match`, `If-None-Match`, `If-(Un)Modified-Since` | `304` or `412` as RFC 9110 says |
+| `POST /lws/{storage}/access/requests/` | An access request (`AccessRequest`, `application/lws+json`) for the agent itself |
+| `POST /lws/{storage}/access/grants/` | An access grant, by a controller: its policies take effect at once |
+| `GET` either service, or an entry | The requests and grants the agent may see: all of them for a controller, else its own and the grants that name it |
+| `DELETE` an entry | Cancels a request (its agent or a controller), or revokes a grant (a controller), at once |
 | `GET /.well-known/lws-configuration` | The authorization server's metadata (RFC 8414) |
 | `POST /lws/oauth/token` | Token exchange (RFC 8693): a self-signed credential for an access token to a storage |
 | `GET /lws/oauth/jwks` | The keys that sign access tokens |
@@ -71,6 +75,11 @@ Core §11.3):
 
 Listings show each agent only the members it may read. Removing a policy takes
 effect on the next request.
+
+Over LWS, agents ask for access at the storage's `AccessRequestService`, and its
+controllers grant it at its `AccessGrantService` (LWS Core §11): a grant's
+policies are stored with it, and go when it is revoked. Requests wait on the
+access page, which approves them, granting what they ask, or denies them.
 
 Policies are managed at `/admin/content/lws/{storage id}/access` by storage
 administrators and by a storage's owner with *Manage own LWS storages*, or with

@@ -30,6 +30,10 @@ final class LwsTarget {
    *   For linkset resources, the UUID of the described resource.
    * @param string|null $error
    *   For malformed paths, why the path was rejected.
+   * @param string|null $service
+   *   For the access services, "requests" or "grants".
+   * @param string|null $recordId
+   *   For an entry of an access service, its UUID; NULL for the service.
    */
   private function __construct(
     public readonly LwsArea $area,
@@ -39,6 +43,8 @@ final class LwsTarget {
     public readonly bool $container = FALSE,
     public readonly ?string $metaId = NULL,
     public readonly ?string $error = NULL,
+    public readonly ?string $service = NULL,
+    public readonly ?string $recordId = NULL,
   ) {}
 
   /**
@@ -69,6 +75,22 @@ final class LwsTarget {
    */
   public static function meta(string $rawPath, string $storage, string $metaId): self {
     return new self(LwsArea::Meta, $rawPath, $storage, metaId: $metaId);
+  }
+
+  /**
+   * The access request or access grant service, or one of its entries.
+   *
+   * @param string $rawPath
+   *   The request path.
+   * @param string $storage
+   *   The storage slug.
+   * @param string $service
+   *   The service: "requests" or "grants".
+   * @param string|null $recordId
+   *   The UUID of an entry; NULL for the service itself, a container.
+   */
+  public static function access(string $rawPath, string $storage, string $service, ?string $recordId): self {
+    return new self(LwsArea::Access, $rawPath, $storage, container: $recordId === NULL, service: $service, recordId: $recordId);
   }
 
   /**
@@ -111,6 +133,11 @@ final class LwsTarget {
         default => ['GET', 'HEAD', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
       },
       LwsArea::Meta => ['GET', 'HEAD', 'PUT', 'PATCH', 'OPTIONS'],
+      // The services are containers whose entries are created by POST, and
+      // cancelled or revoked by DELETE (LWS Core §11.5).
+      LwsArea::Access => $this->recordId === NULL
+        ? ['GET', 'HEAD', 'POST', 'OPTIONS']
+        : ['GET', 'HEAD', 'DELETE', 'OPTIONS'],
       LwsArea::Description => ['GET', 'HEAD', 'OPTIONS'],
       LwsArea::Unknown, LwsArea::Malformed => [],
     };

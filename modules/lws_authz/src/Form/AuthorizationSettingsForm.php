@@ -136,6 +136,14 @@ final class AuthorizationSettingsForm extends ConfigFormBase {
       '#default_value' => $settings->get('rate_limits.subject'),
       '#required' => TRUE,
     ];
+    $form['rate_limit_access_requests'] = [
+      '#type' => 'number',
+      '#title' => $this->t('Access requests per hour from one agent'),
+      '#description' => $this->t('How many access requests one agent may submit to the storages of this site.'),
+      '#min' => 1,
+      '#default_value' => $settings->get('rate_limits.access_requests'),
+      '#required' => TRUE,
+    ];
     return parent::buildForm($form, $form_state);
   }
 
@@ -155,6 +163,7 @@ final class AuthorizationSettingsForm extends ConfigFormBase {
       ->set('token_lifetime', (int) $form_state->getValue('token_lifetime'))
       ->set('rate_limits.client', (int) $form_state->getValue('rate_limit_client'))
       ->set('rate_limits.subject', (int) $form_state->getValue('rate_limit_subject'))
+      ->set('rate_limits.access_requests', (int) $form_state->getValue('rate_limit_access_requests'))
       ->save();
     parent::submitForm($form, $form_state);
   }

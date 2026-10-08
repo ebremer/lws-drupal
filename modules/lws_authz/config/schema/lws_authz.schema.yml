@@ -27,6 +27,9 @@ lws_authz.settings:
         subject:
           type: integer
           label: 'Tokens issued per minute to one subject.'
+        access_requests:
+          type: integer
+          label: 'Access requests one agent may submit per hour.'
 
 lws_authz.trusted_as.*:
   type: config_entity

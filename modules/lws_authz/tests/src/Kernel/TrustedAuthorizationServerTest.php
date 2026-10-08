@@ -174,6 +174,7 @@ final class TrustedAuthorizationServerTest extends KernelTestBase {
       'token_lifetime' => 120,
       'rate_limit_client' => 10,
       'rate_limit_subject' => 5,
+      'rate_limit_access_requests' => 3,
       'op' => 'Save configuration',
     ];
     $formState = (new FormState())->setValues($values);
@@ -184,7 +185,7 @@ final class TrustedAuthorizationServerTest extends KernelTestBase {
     $this->assertSame(30, $settings->get('clock_skew'));
     $this->assertSame([], $settings->get('suites'));
     $this->assertSame(120, $settings->get('token_lifetime'));
-    $this->assertSame(['client' => 10, 'subject' => 5], $settings->get('rate_limits'));
+    $this->assertSame(['client' => 10, 'subject' => 5, 'access_requests' => 3], $settings->get('rate_limits'));
 
     // The form refuses a lifetime above an hour.
     $formState = (new FormState())->setValues(['token_lifetime' => 7200] + $values);

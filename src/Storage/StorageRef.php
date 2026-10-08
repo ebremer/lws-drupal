@@ -25,6 +25,8 @@ final class StorageRef {
    * @param string|null $authorizationServer
    *   The authorization server whose tokens it accepts, by ID; NULL for the
    *   site's default.
+   * @param bool $enabled
+   *   Whether it serves requests; a blocked storage answers 503.
    */
   public function __construct(
     public readonly int $id,
@@ -32,6 +34,7 @@ final class StorageRef {
     public readonly string $uri,
     public readonly array $controllers,
     public readonly ?string $authorizationServer = NULL,
+    public readonly bool $enabled = TRUE,
   ) {}
 
 }

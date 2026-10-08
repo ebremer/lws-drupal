@@ -50,6 +50,8 @@ final class LwsUrlParserTest extends UnitTestCase {
       'dots inside a name' => ['/lws/alice/root/.profile/...x', LwsArea::Resource, ['root', '.profile', '...x'], FALSE],
       'storage slug with digits and hyphens' => ['/lws/team-42/root/', LwsArea::Resource, ['root'], TRUE],
       'linkset' => ['/lws/alice/meta/0b5c3a5e-6a3e-4c1f-9d2e-3f1a2b3c4d5e', LwsArea::Meta, [], FALSE],
+      'access requests' => ['/lws/alice/access/requests/', LwsArea::Access, [], TRUE],
+      'an access grant' => ['/lws/alice/access/grants/0b5c3a5e-6a3e-4c1f-9d2e-3f1a2b3c4d5e', LwsArea::Access, [], FALSE],
     ];
   }
 
@@ -97,6 +99,19 @@ final class LwsUrlParserTest extends UnitTestCase {
   }
 
   /**
+   * Tests the access services and their entries.
+   */
+  public function testAccess(): void {
+    $parser = $this->parser();
+    $service = $parser->parse('/lws/alice/access/grants/');
+    $this->assertSame(['grants', NULL], [$service?->service, $service?->recordId]);
+    $this->assertSame(['GET', 'HEAD', 'POST', 'OPTIONS'], $service?->allowedMethods());
+    $entry = $parser->parse('/lws/alice/access/requests/0b5c3a5e-6a3e-4c1f-9d2e-3f1a2b3c4d5e');
+    $this->assertSame(['requests', '0b5c3a5e-6a3e-4c1f-9d2e-3f1a2b3c4d5e'], [$entry?->service, $entry?->recordId]);
+    $this->assertSame(['GET', 'HEAD', 'DELETE', 'OPTIONS'], $entry?->allowedMethods());
+  }
+
+  /**
    * Paths under the prefix at which nothing can exist.
    *
    * @return array<string, array{string}>
@@ -116,6 +131,11 @@ final class LwsUrlParserTest extends UnitTestCase {
       'linkset without an id' => ['/lws/alice/meta/'],
       'linkset with an upper-case id' => ['/lws/alice/meta/0B5C3A5E-6A3E-4C1F-9D2E-3F1A2B3C4D5E'],
       'linkset with a trailing slash' => ['/lws/alice/meta/0b5c3a5e-6a3e-4c1f-9d2e-3f1a2b3c4d5e/'],
+      'access without a service' => ['/lws/alice/access/'],
+      'an unknown access service' => ['/lws/alice/access/policies/'],
+      'access service without its slash' => ['/lws/alice/access/grants'],
+      'access entry that is not a UUID' => ['/lws/alice/access/grants/42'],
+      'access entry with a trailing slash' => ['/lws/alice/access/grants/0b5c3a5e-6a3e-4c1f-9d2e-3f1a2b3c4d5e/'],
     ];
   }
 

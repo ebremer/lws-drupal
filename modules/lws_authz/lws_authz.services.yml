@@ -83,6 +83,23 @@ services:
     arguments: ['@entity_type.manager']
   Drupal\lws_authz\Policy\PolicyStore: '@lws_authz.policy_store'
 
+  lws_authz.access_records:
+    class: Drupal\lws_authz\AccessService\AccessRecords
+    arguments: ['@entity_type.manager', '@lws_authz.access_document_parser', '@lws_authz.policy_store', '@database', '@event_dispatcher', '@lws.url_generator', '@datetime.time']
+  Drupal\lws_authz\AccessService\AccessRecords: '@lws_authz.access_records'
+
+  lws_authz.access_document_parser:
+    class: Drupal\lws_authz\AccessService\AccessDocumentParser
+    arguments: ['@lws_authz.policy_parser']
+  Drupal\lws_authz\AccessService\AccessDocumentParser: '@lws_authz.access_document_parser'
+
+  # The AccessRequestService and AccessGrantService of storage descriptions.
+  lws_authz.access_services:
+    class: Drupal\lws_authz\AccessService\AccessServices
+    arguments: ['@lws.url_generator']
+    tags:
+      - { name: lws.storage_service, priority: 100 }
+
   lws_authz.policy_parser:
     class: Drupal\lws_authz\Policy\AccessPolicyParser
     arguments: ['@lws.url_parser', '@lws.url_generator']

@@ -176,3 +176,21 @@ lws_storage.access_delete:
         type: entity:lws_storage
       lws_policy:
         type: entity:lws_policy
+
+lws_storage.access_request:
+  path: '/admin/content/lws/{lws_storage}/access/requests/{lws_access}/{decision}'
+  defaults:
+    _form: '\Drupal\lws_storage\Form\AccessRequestForm'
+    _title: 'Access request'
+  requirements:
+    _custom_access: '\Drupal\lws_storage\Controller\StorageAccessController::access'
+    lws_storage: '\d+'
+    lws_access: '\d+'
+    decision: 'approve|deny'
+  options:
+    _admin_route: TRUE
+    parameters:
+      lws_storage:
+        type: entity:lws_storage
+      lws_access:
+        type: entity:lws_access

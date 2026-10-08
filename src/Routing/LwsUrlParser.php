@@ -117,6 +117,9 @@ final class LwsUrlParser {
     if (str_starts_with($path, 'meta/') && preg_match(self::UUID, substr($path, 5))) {
       return LwsTarget::meta($rawPath, $storage, substr($path, 5));
     }
+    if (preg_match('#^access/(requests|grants)/(' . substr(self::UUID, 2, -2) . ')?$#', $path, $matches) === 1) {
+      return LwsTarget::access($rawPath, $storage, $matches[1], ($matches[2] ?? '') === '' ? NULL : $matches[2]);
+    }
     return LwsTarget::unknown($rawPath, $storage);
   }
 

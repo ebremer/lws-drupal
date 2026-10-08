@@ -44,6 +44,7 @@ final class StorageRegistry implements StorageRegistryInterface {
       $this->urls->storageUri($storage->getSlug()),
       $storage->getControllers(),
       $storage->getAuthorizationServerId(),
+      $storage->isEnabled(),
     );
   }
 

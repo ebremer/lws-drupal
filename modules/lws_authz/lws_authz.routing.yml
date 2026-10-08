@@ -35,5 +35,48 @@ lws_authz.settings:
   requirements:
     _permission: 'administer lws'
 
+# The access request and access grant services of storages (LWS Core §11), in
+# the LWS URL space at {storage}/access/requests/ and {storage}/access/grants/.
+# Who may do what depends on the agent and the entry, so the controller
+# decides, refusing as the storage would: a 401 challenge without a token.
+lws_authz.access:
+  path: '/_lws/access'
+  defaults:
+    _controller: '\Drupal\lws_authz\Controller\AccessServiceController::read'
+  methods: [GET, HEAD]
+  requirements:
+    # The controller decides, for the agent and the entry.
+    _access: 'TRUE'
+  options:
+    _lws: TRUE
+    _auth: ['lws_bearer']
+    no_cache: TRUE
+
+lws_authz.access.post:
+  path: '/_lws/access'
+  defaults:
+    _controller: '\Drupal\lws_authz\Controller\AccessServiceController::post'
+  methods: [POST]
+  requirements:
+    # The controller decides, for the agent and the entry.
+    _access: 'TRUE'
+  options:
+    _lws: TRUE
+    _auth: ['lws_bearer']
+    no_cache: TRUE
+
+lws_authz.access.delete:
+  path: '/_lws/access'
+  defaults:
+    _controller: '\Drupal\lws_authz\Controller\AccessServiceController::delete'
+  methods: [DELETE]
+  requirements:
+    # The controller decides, for the agent and the entry.
+    _access: 'TRUE'
+  options:
+    _lws: TRUE
+    _auth: ['lws_bearer']
+    no_cache: TRUE
+
 route_callbacks:
   - '\Drupal\lws_authz\Routing\AuthorizationServerRoutes::routes'

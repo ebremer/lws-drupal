@@ -1506,6 +1506,54 @@ with no adapters.
 - **Exit:** the Touchstone `access_grants` area passes; revoking a grant takes effect on the next
   request.
 
+**Done.** Differences from the plan above:
+
+- **Built as planned:**
+  - both services, at `{s}/access/requests/` and `{s}/access/grants/`, are LWS containers: an
+    `application/lws+json` listing with `rel="type"` `Container`, `first` and `next` links and
+    `Accept-Post`. Each entry is an `application/lws+json` data resource;
+  - the storage description advertises them, as `AccessRequestService` and `AccessGrantService`
+    with `conformsTo` the access profile, through the `lws.storage_service` tag;
+  - `POST`:
+    - any authenticated agent may submit a request, but only for itself (`403` otherwise). It is
+      rate-limited per agent (30 an hour by default) and capped at 64 KiB;
+    - only the storage's controllers may submit a grant;
+    - a document must have a `type` with the right term, a `storage` naming this storage, a
+      non-empty `access` of policies that A3's parser accepts, and any `inbox` must be an http(s)
+      URL. A missing `@context` gets the LWS context. Other members are kept;
+    - the errors are `422`; a body that is not JSON is `400`, another media type `415`, and one
+      too large `413`;
+  - a grant becomes one `lws_policy` per policy, source `grant:{uuid}`, in the same transaction.
+    `DELETE` revokes it with its policies, also in one transaction, effective on the next request;
+  - privacy (§17.1): controllers see everything, and a submitter sees its own entries. A grant is
+    also visible to the agents its policies name, except through a client that every such
+    policy's `client` constraint excludes;
+  - `DELETE` cancels a request (its submitter or a controller) or revokes a grant (a controller);
+  - notification hooks: `AccessRecordEvent::CREATED` and `DELETED`, which for a grant made by
+    approving a request carries the request. `lws_notify` (S6) will deliver them;
+  - the access page lists the waiting requests with Approve and Deny:
+    - Approve grants what the request asks, in a grant that names its inbox, and settles the
+      request;
+    - Deny deletes the request;
+    - a grant's policies show its URI, and removing one revokes the whole grant.
+- **Built differently:**
+  - one entity type, `lws_access`, holds requests and grants, with a `kind`. It keeps the document
+    as submitted, plus its `id`; the policies do the enforcing;
+  - the endpoints are in `lws_authz`, which finds the storage through `StorageRegistryInterface`.
+    `StorageRef` gained `enabled`, so that a blocked storage answers `503`;
+  - the LWS URL space gained an `Access` area for `{s}/access/{requests|grants}/[{uuid}]`;
+  - an approved or denied request is deleted rather than given a status.
+- **Left out:** delivering notifications (S6), and Drush commands for requests and grants.
+- **Exit criteria:**
+  - Touchstone `access_grants` passes 16 of 17. The failure is `access-grant-inbox-notified`, a
+    SHOULD that waits for notification delivery (S6);
+  - revocation takes effect on the next request, in kernel tests and in Touchstone's
+    `access-grant-revoke`.
+- **Verified:** 452 tests; phpcs and phpstan (level 8) are clean. Touchstone `core` has
+  102 passed and that one SHOULD failed, up from 86 passed. Of the 20 still inapplicable, 15
+  await notifications (S6), 4 need a page size under five, and one applies only to servers
+  without linkset `PUT`. `auth/cid` passes 22/22.
+
 **A5. OpenID Connect and SAML suites.**
 
 - **Scope:**

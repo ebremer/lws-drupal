@@ -17,6 +17,8 @@ enum LwsArea: string {
 
   // The linkset resource of a container or data resource.
   case Meta = 'meta';
+  // The access request or access grant service, or one of its entries.
+  case Access = 'access';
 
   // Well-formed, but nothing can exist there.
   case Unknown = 'unknown';
@@ -32,6 +34,7 @@ enum LwsArea: string {
       self::Description => '/_lws/description',
       self::Resource => '/_lws/resource',
       self::Meta => '/_lws/meta',
+      self::Access => '/_lws/access',
       self::Unknown, self::Malformed => '/_lws/unknown',
     };
   }

@@ -95,6 +95,44 @@ final class PolicyStore {
   }
 
   /**
+   * The policies from one source, such as an access grant.
+   *
+   * @return list<\Drupal\lws_authz\Policy\AccessPolicy>
+   *   The policies.
+   */
+  public function forSource(string $source): array {
+    return array_values(array_map(
+      static fn (LwsPolicyInterface $entity): AccessPolicy => $entity->toAccessPolicy(),
+      $this->bySource($source),
+    ));
+  }
+
+  /**
+   * Deletes the policies from one source, as when a grant is revoked.
+   */
+  public function deleteBySource(string $source): void {
+    $this->storage()->delete($this->bySource($source));
+  }
+
+  /**
+   * The policy entities from one source.
+   *
+   * @return array<int, \Drupal\lws_authz\Entity\LwsPolicyInterface>
+   *   The policies, by ID.
+   */
+  private function bySource(string $source): array {
+    $ids = $this->storage()->getQuery()->accessCheck(FALSE)->condition('source', $source)->sort('id')->execute();
+    $policies = [];
+    foreach ($this->storage()->loadMultiple($ids) as $id => $entity) {
+      // The database may compare case-insensitively.
+      if ($entity instanceof LwsPolicyInterface && $entity->getSource() === $source) {
+        $policies[(int) $id] = $entity;
+      }
+    }
+    return $policies;
+  }
+
+  /**
    * Deletes the policies of a storage, as when it is deleted.
    */
   public function deleteForStorage(int $storageId): void {

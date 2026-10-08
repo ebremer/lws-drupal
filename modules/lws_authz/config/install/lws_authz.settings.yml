@@ -6,3 +6,4 @@ suites:
 rate_limits:
   client: 100
   subject: 30
+  access_requests: 30
