@@ -535,13 +535,19 @@ different one. Clients must not depend on it; `Accept-Patch` is the normative si
 
 - **Order and cursors.** Items are ordered by `name` under binary collation. Pagination uses
   keyset cursors, so it stays stable while the container changes. A cursor is an opaque string,
-  `?page=<base64url(json{after, v})>`.
+  `?page=<base64url(json{a: after})>.<signature>`, signed with the site's private key for one
+  container (its UUID).
   - `first` (the container URI) is always present, and `next` is present when more items exist
     (§12.1.2).
-  - `prev` is sent where cheap; `last` is not sent.
-  - A stale or tampered cursor → `404`.
-- **Page size.** Set per storage; the default is 100. Touchstone's pagination tests need a small
-  page size on the test storage.
+  - `prev` and `last` are sent when the listing is a plain query (step 3 below); `last` starts at
+    the multiple of the page size that following `next` from the first page reaches.
+  - A tampered cursor, or one signed for another container (such as one deleted and created again
+    at the same URI) → `404`. A cursor whose member has since been deleted still works: the page
+    starts after where that name would be.
+  - The first page's entity tag is the container's (`"c{version}"`); other pages add a hash of the
+    cursor.
+- **Page size.** Set per storage (`page_size`); the default is `lws_storage.settings:page_size`,
+  100. Touchstone's multi-page tests need a page size below 5 on the test storage.
 - **Authorization filtering (§7.5).** Listings come from `AccessDecisionInterface::forAgent()`.
   1. The PDP pre-computes the agent's applicable policies once per request.
   2. It answers per item in memory.
@@ -1091,12 +1097,11 @@ merge with passing tests; the build order is at the end of this section.
 - placeholder responses (`UrlSpaceController`), which S1 replaces.
 
 Since then, S1 added the settings form and `hook_requirements()`, A1 the seams, the SSRF guard
-and the CORS subscriber, and S2 `Preconditions`. Q4 was decided for using `lws-client` directly,
+and the CORS subscriber, S2 `Preconditions`, and S3 `PaginationCursor`. Q4 was decided for using `lws-client` directly,
 with no adapters.
 
 **Still to do in Step 0:**
 
-- `PaginationCursor` (with S3);
 - the MySQL and PostgreSQL CI matrix.
 
 ### Storage module steps
@@ -1209,6 +1214,24 @@ with no adapters.
 - **Spec:** §7.5, §8.1, §12.1.
 - **Exit:** with a page size of 5, the client's `listContainer()` walks 8 items across 2 pages;
   stale cursors give `404`.
+
+**Done.** Differences from the plan above:
+
+- **Built as planned:** keyset pages with `first`, `next`, `prev` and `last`; `totalItems` across
+  pages; `AccessDecisionInterface::forAgent()` with `AgentAccessScopeInterface`, whose
+  `readsSubtree()` lets a listing be a plain query, and `mayRead()` filters member by member
+  otherwise. Until A3 only controllers read listings, so the filtered path is exercised by a test
+  policy.
+- **Built differently:** cursors are signed rather than versioned, so a listing that changes
+  between pages keeps working; only a forged or foreign cursor is "stale" (`404`). The filtered
+  path counts the visible members by scanning, and offers only `next`; the threshold for an
+  approximate count waits until listings that large are filtered (A3).
+- **Exit criteria:** with a page size of 5, the PHP client's `listContainer()` walked 8 members
+  across 2 pages through Apache. Stale and forged cursors give `404` (kernel tests).
+- **Touchstone:** pagination 4/4 with a page size of 2 (the single-page test is then
+  inapplicable) and the single-page test with the default size; 83 passed in `core` overall, the
+  failures being `PATCH`, linkset writes (S4) and the authorization server (A2).
+- **Verified:** 267 tests.
 
 **S4. Metadata: linksets, link headers and JSON Patch.**
 

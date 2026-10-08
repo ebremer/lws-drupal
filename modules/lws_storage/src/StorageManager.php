@@ -67,11 +67,13 @@ final class StorageManager {
    *   for the site's default.
    * @param int|null $quotaBytes
    *   The most content it may hold, in bytes; NULL for no limit.
+   * @param int|null $pageSize
+   *   The members on one page of a listing; NULL for the site default.
    *
    * @throws \InvalidArgumentException
    *   When the storage would be invalid, for example a taken or malformed slug.
    */
-  public function createStorage(string $slug, string $label, array $controllers = [], ?int $ownerId = NULL, ?string $authorizationServer = NULL, ?int $quotaBytes = NULL): LwsStorageInterface {
+  public function createStorage(string $slug, string $label, array $controllers = [], ?int $ownerId = NULL, ?string $authorizationServer = NULL, ?int $quotaBytes = NULL, ?int $pageSize = NULL): LwsStorageInterface {
     if ($authorizationServer !== NULL && $this->entityTypeManager->getStorage('lws_trusted_as')->load($authorizationServer) === NULL) {
       throw new \InvalidArgumentException(sprintf('There is no trusted authorization server %s.', $authorizationServer));
     }
@@ -82,6 +84,7 @@ final class StorageManager {
       'owner' => $ownerId,
       'authorization_server' => $authorizationServer,
       'quota_bytes' => $quotaBytes,
+      'page_size' => $pageSize,
     ]);
     assert($storage instanceof LwsStorageInterface);
     $violations = $storage->validate();

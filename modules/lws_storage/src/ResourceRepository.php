@@ -80,6 +80,78 @@ final class ResourceRepository {
   }
 
   /**
+   * Members of a container in name order, after a name.
+   *
+   * @param \Drupal\lws_storage\Entity\LwsResourceInterface $container
+   *   The container.
+   * @param string|null $after
+   *   The name the members follow; NULL to start with the first.
+   * @param int $limit
+   *   The most members to return.
+   *
+   * @return list<\Drupal\lws_storage\Entity\LwsResourceInterface>
+   *   The members.
+   */
+  public function membersAfter(LwsResourceInterface $container, ?string $after, int $limit): array {
+    $query = $this->database->select('lws_resource', 'r')
+      ->fields('r', ['id'])
+      ->condition('parent', $container->id())
+      ->orderBy('name')
+      ->range(0, $limit);
+    if ($after !== NULL) {
+      $query->condition('name', $after, '>');
+    }
+    $ids = $query->execute()?->fetchCol() ?? [];
+    $loaded = $this->storage()->loadMultiple($ids);
+    $members = [];
+    foreach ($ids as $id) {
+      if (($loaded[$id] ?? NULL) instanceof LwsResourceInterface) {
+        $members[] = $loaded[$id];
+      }
+    }
+    return $members;
+  }
+
+  /**
+   * The names of a container's members before a name, nearest first.
+   *
+   * @return list<string>
+   *   At most $limit names.
+   */
+  public function namesBefore(LwsResourceInterface $container, string $before, int $limit): array {
+    return array_values(array_map('strval', $this->database->select('lws_resource', 'r')
+      ->fields('r', ['name'])
+      ->condition('parent', $container->id())
+      ->condition('name', $before, '<')
+      ->orderBy('name', 'DESC')
+      ->range(0, $limit)
+      ->execute()?->fetchCol() ?? []));
+  }
+
+  /**
+   * The name of the member at a position in name order, counting from 0.
+   */
+  public function nameAt(LwsResourceInterface $container, int $position): ?string {
+    $name = $this->database->select('lws_resource', 'r')
+      ->fields('r', ['name'])
+      ->condition('parent', $container->id())
+      ->orderBy('name')
+      ->range($position, 1)
+      ->execute()?->fetchField();
+    return is_string($name) ? $name : NULL;
+  }
+
+  /**
+   * The number of members of a container.
+   */
+  public function countMembers(LwsResourceInterface $container): int {
+    return (int) $this->database->select('lws_resource', 'r')
+      ->condition('parent', $container->id())
+      ->countQuery()
+      ->execute()?->fetchField();
+  }
+
+  /**
    * The member of a container with a stored name, if there is one.
    *
    * @param \Drupal\lws_storage\Entity\LwsResourceInterface $container

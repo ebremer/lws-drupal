@@ -49,6 +49,11 @@ interface LwsStorageInterface extends ContentEntityInterface, EntityChangedInter
   public function getUsedBytes(): int;
 
   /**
+   * The members on one page of a listing; NULL for the site default.
+   */
+  public function getPageSize(): ?int;
+
+  /**
    * Whether the storage serves requests; a blocked storage answers 503.
    */
   public function isEnabled(): bool;

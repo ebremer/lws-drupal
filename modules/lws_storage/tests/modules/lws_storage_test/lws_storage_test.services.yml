@@ -3,3 +3,10 @@ services:
     class: Drupal\lws_storage_test\EventSubscriber\RejectingValidator
     tags:
       - { name: event_subscriber }
+
+  # Lets one agent read everything but resources named "secret...", to test
+  # listings that are filtered member by member.
+  lws_storage_test.access_decision:
+    class: Drupal\lws_storage_test\Access\PartialReader
+    decorates: lws_authz.access_decision
+    arguments: ['@lws_storage_test.access_decision.inner']

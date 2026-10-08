@@ -13,14 +13,14 @@ is in [DESIGN.md](DESIGN.md).
 
 ## Status
 
-**Step S2, data resources** (DESIGN.md §10), after S1, storages, and A1, access
-tokens. Storages are created with Drush; everything in them is managed over HTTP
+**Step S3, pagination** (DESIGN.md §10), after S1, storages, A1, access tokens,
+and S2, data resources. Storages are created with Drush; everything in them is managed over HTTP
 by their controllers:
 
 | Request | Response |
 |---|---|
 | `GET /lws/{storage}/` | The storage description (`application/lws+cid`, or `ld+json`/`json` by `Accept`), to anyone |
-| `GET`/`HEAD` a container | A listing (`application/lws+json`, or `ld+json`/`json`) with each member's type, media type, size and modification time |
+| `GET`/`HEAD` a container | A listing (`application/lws+json`, or `ld+json`/`json`) with each member's type, media type, size and modification time, in pages (100 members by default) linked with `first`, `next`, `prev` and `last` |
 | `GET`/`HEAD` a data resource | Its bytes, with byte ranges (`206`, `416`) |
 | `POST` to a container | `201` and `Location`: a data resource from the body, or a container with `Link: <https://www.w3.org/ns/lws#Container>; rel="type"`. The `Slug` header suggests the name |
 | `PUT` a data resource | `204`: its content replaced. There is no create-by-`PUT` |
@@ -39,7 +39,7 @@ writable linksets with S4.
 
 ```sh
 drush lws:as:add main https://as.example --default    # trust an authorization server
-drush lws:storage:create alice --controller=https://id.example/alice --quota=1000000000
+drush lws:storage:create alice --controller=https://id.example/alice --quota=1000000000 --page-size=50
 drush lws:storage:list
 drush lws:storage:delete alice
 drush lws:gc                                           # sweep unreferenced content

@@ -107,6 +107,12 @@ class LwsStorage extends ContentEntityBase implements LwsStorageInterface {
       ->setSetting('size', 'big')
       ->setDefaultValue(0);
 
+    $fields['page_size'] = BaseFieldDefinition::create('integer')
+      ->setLabel(new TranslatableMarkup('Page size'))
+      ->setDescription(new TranslatableMarkup('The members on one page of a container listing. Empty for the site default.'))
+      ->setSetting('unsigned', TRUE)
+      ->setSetting('min', 1);
+
     $fields['status'] = BaseFieldDefinition::create('boolean')
       ->setLabel(new TranslatableMarkup('Enabled'))
       ->setDefaultValue(TRUE);
@@ -163,6 +169,14 @@ class LwsStorage extends ContentEntityBase implements LwsStorageInterface {
    */
   public function getUsedBytes(): int {
     return (int) $this->get('used_bytes')->value;
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function getPageSize(): ?int {
+    $size = $this->get('page_size')->value;
+    return $size === NULL || $size === '' ? NULL : (int) $size;
   }
 
   /**

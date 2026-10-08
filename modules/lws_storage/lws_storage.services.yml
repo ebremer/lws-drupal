@@ -46,6 +46,11 @@ services:
       # First in the description's service set.
       - { name: lws.storage_service, priority: 1000 }
 
+  lws_storage.container_pager:
+    class: Drupal\lws_storage\Listing\ContainerPager
+    arguments: ['@lws_storage.resource_repository', '@lws_storage.resource_links', '@lws.pagination_cursor', '@config.factory', '@entity_type.manager']
+  Drupal\lws_storage\Listing\ContainerPager: '@lws_storage.container_pager'
+
   lws_storage.storage_registry:
     class: Drupal\lws_storage\StorageRegistry
     arguments: ['@entity_type.manager', '@lws.url_generator']

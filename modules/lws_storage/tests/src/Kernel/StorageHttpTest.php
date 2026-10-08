@@ -241,7 +241,10 @@ final class StorageHttpTest extends LwsStorageKernelTestBase {
     $this->assertSame(200, $head->getStatusCode());
     $this->assertSame('"c1"', $head->getEtag());
 
-    $this->assertSame(self::STORAGE . 'root/', $this->json($this->send('GET', '/lws/alice/root/?page=abc'))['id']);
+    // Other query parameters are ignored, but a page that is not one of the
+    // server's is not found.
+    $this->assertSame(self::STORAGE . 'root/', $this->json($this->send('GET', '/lws/alice/root/?sort=name'))['id']);
+    $this->assertProblem($this->send('GET', '/lws/alice/root/?page=abc'), 404, self::STORAGE . 'root/');
 
     // OPTIONS answers from the shape of the URL, existing or not.
     $allow = [

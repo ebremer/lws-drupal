@@ -2,3 +2,4 @@ scheme: private
 max_upload_bytes: 0
 max_recursive_delete: 1000
 require_if_match: false
+page_size: 100

@@ -18,6 +18,7 @@ use Drupal\lws\Routing\LwsTarget;
 use Drupal\lws_storage\Entity\LwsResourceInterface;
 use Drupal\lws_storage\Entity\LwsStorageInterface;
 use Drupal\lws_storage\Http\ContentResponse;
+use Drupal\lws_storage\Listing\ContainerPager;
 use Drupal\lws_storage\ResourceLinks;
 use Drupal\lws_storage\ResourceRepository;
 use Drupal\lws_storage\StorageManager;
@@ -52,6 +53,7 @@ final class ResourceController implements ContainerInjectionInterface {
     private readonly ResourceRepository $resources,
     private readonly StorageManager $manager,
     private readonly ResourceLinks $links,
+    private readonly ContainerPager $pager,
     private readonly AccessDecisionInterface $decisions,
     private readonly ConfigFactoryInterface $configFactory,
     #[Autowire(service: 'logger.channel.lws')]
@@ -141,19 +143,46 @@ final class ResourceController implements ContainerInjectionInterface {
   }
 
   /**
-   * Serves a container representation (§8.1).
+   * Serves one page of a container representation (§8.1, §12.1.2).
+   *
+   * Every listing is presented as paginated: it links its first page, which
+   * is the container's own URI, and the next, previous and last pages where
+   * there are any. Other pages are reached through opaque cursors.
    */
   private function container(LwsStorageInterface $storage, LwsResourceInterface $container, Request $request, string $allow): Response {
+    $cursor = $request->query->has('page') ? (string) $request->query->get('page') : NULL;
+    if ($cursor !== NULL) {
+      $this->pager->after($container, $cursor);
+    }
     $type = MediaTypeNegotiator::negotiate($request->headers->get('Accept'), self::CONTAINER_MEDIA_TYPES)
       ?? throw LwsHttpException::notAcceptable(self::CONTAINER_MEDIA_TYPES);
+    $uri = $this->links->uri($storage, $container);
+    // The first page keeps the container's own entity tag, which a later
+    // conditional DELETE of the container compares with.
+    $etag = $container->getEtag() . ($cursor === NULL ? '' : '.' . substr(hash('sha256', $cursor), 0, 12));
+    $links = [...$this->links->headers($storage, $container), LinkHeader::format($uri, LinkRelation::FIRST)];
     $headers = ['Vary' => 'Accept', 'Allow' => $allow];
-    $notModified = $this->notModified($request, $container, $this->links->headers($storage, $container), $headers);
-    if ($notModified !== NULL) {
-      return $notModified;
+    $lastModified = new \DateTimeImmutable('@' . $container->getChangedTime());
+
+    $status = Preconditions::evaluate($request, $etag, $container->getChangedTime());
+    if ($status === 412) {
+      throw LwsHttpException::preconditionFailed();
+    }
+    if ($status === 304) {
+      return LwsResponse::empty(Response::HTTP_NOT_MODIFIED, $links, $etag, $headers)->setLastModified($lastModified);
+    }
+
+    $agent = Authentication::fromRequest($request)->agent;
+    $context = $this->links->contextOf($storage, $container);
+    $page = $this->pager->page($storage, $container, $cursor, $this->decisions->forAgent($agent, $context->storage));
+    foreach ([LinkRelation::NEXT => $page->next, LinkRelation::PREV => $page->prev, LinkRelation::LAST => $page->last] as $rel => $pageCursor) {
+      if ($pageCursor !== NULL) {
+        $links[] = LinkHeader::format($pageCursor === '' ? $uri : $uri . '?page=' . $pageCursor, $rel);
+      }
     }
 
     $items = [];
-    foreach ($this->resources->children($container) as $member) {
+    foreach ($page->members as $member) {
       $item = [
         'type' => $member->isContainer() ? 'Container' : 'DataResource',
         'id' => $this->links->uri($storage, $member),
@@ -167,20 +196,13 @@ final class ResourceController implements ContainerInjectionInterface {
     }
     $body = [
       '@context' => Vocabulary::LWS_CONTEXT,
-      'id' => $this->links->uri($storage, $container),
+      'id' => $uri,
       'type' => 'Container',
-      'totalItems' => count($items),
+      'totalItems' => $page->total,
       'items' => $items,
     ];
-    $response = LwsResponse::json(
-      $body,
-      $type->contentType([Vocabulary::LWS_CONTEXT]),
-      $this->links->headers($storage, $container),
-      $container->getEtag(),
-      $headers,
-    );
-    $response->setLastModified(new \DateTimeImmutable('@' . $container->getChangedTime()));
-    return $response;
+    return LwsResponse::json($body, $type->contentType([Vocabulary::LWS_CONTEXT]), $links, $etag, $headers)
+      ->setLastModified($lastModified);
   }
 
   /**

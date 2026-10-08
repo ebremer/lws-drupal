@@ -47,6 +47,7 @@ final class LwsStorageCommands extends DrushCommands {
   #[CLI\Option(name: 'owner', description: 'The ID of the Drupal user who administers the storage.')]
   #[CLI\Option(name: 'authorization-server', description: 'The ID of the trusted authorization server whose tokens it accepts; defaults to the site default (see lws:as:list).')]
   #[CLI\Option(name: 'quota', description: 'The most content the storage may hold, in bytes. No limit by default.')]
+  #[CLI\Option(name: 'page-size', description: 'The members on one page of a container listing. The site default (lws_storage.settings:page_size) by default.')]
   #[CLI\Usage(name: 'drush lws:storage:create alice --controller=https://id.example/alice', description: 'Creates the storage /lws/alice/ controlled by that agent.')]
   public function createStorage(
     string $slug,
@@ -56,6 +57,7 @@ final class LwsStorageCommands extends DrushCommands {
       'owner' => NULL,
       'authorization-server' => NULL,
       'quota' => NULL,
+      'page-size' => NULL,
     ],
   ): void {
     $storage = $this->storages->createStorage(
@@ -65,6 +67,7 @@ final class LwsStorageCommands extends DrushCommands {
       $options['owner'] === NULL ? NULL : (int) $options['owner'],
       $options['authorization-server'] === NULL ? NULL : (string) $options['authorization-server'],
       $options['quota'] === NULL ? NULL : (int) $options['quota'],
+      $options['page-size'] === NULL ? NULL : (int) $options['page-size'],
     );
     $this->logger()?->success(dt('Created storage @slug at @uri', [
       '@slug' => $storage->getSlug(),

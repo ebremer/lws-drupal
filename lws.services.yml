@@ -19,6 +19,11 @@ services:
     arguments: ['@http_client', '@lws.host_resolver', '@settings']
   Drupal\lws\Outbound\OutboundHttp: '@lws.outbound_http'
 
+  lws.pagination_cursor:
+    class: Drupal\lws\Http\PaginationCursor
+    arguments: ['@private_key']
+  Drupal\lws\Http\PaginationCursor: '@lws.pagination_cursor'
+
   lws.url_parser:
     class: Drupal\lws\Routing\LwsUrlParser
     arguments: ['@config.factory']
