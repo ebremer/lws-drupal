@@ -68,6 +68,21 @@ lws_storage.resource.replace:
       lws_storage:
         type: lws_storage
 
+lws_storage.resource.patch:
+  path: '/_lws/resource'
+  defaults:
+    _controller: '\Drupal\lws_storage\Controller\ResourceController::patch'
+  methods: [PATCH]
+  requirements:
+    _lws_access: 'resource'
+  options:
+    _lws: TRUE
+    _auth: ['lws_bearer']
+    no_cache: TRUE
+    parameters:
+      lws_storage:
+        type: lws_storage
+
 lws_storage.resource.delete:
   path: '/_lws/resource'
   defaults:
@@ -83,12 +98,42 @@ lws_storage.resource.delete:
       lws_storage:
         type: lws_storage
 
-# The linkset of a resource: read-only until step S4.
+# The linkset of a resource.
 lws_storage.linkset:
   path: '/_lws/meta'
   defaults:
     _controller: '\Drupal\lws_storage\Controller\LinksetController::read'
   methods: [GET, HEAD]
+  requirements:
+    _lws_access: 'resource'
+  options:
+    _lws: TRUE
+    _auth: ['lws_bearer']
+    no_cache: TRUE
+    parameters:
+      lws_storage:
+        type: lws_storage
+
+lws_storage.linkset.put:
+  path: '/_lws/meta'
+  defaults:
+    _controller: '\Drupal\lws_storage\Controller\LinksetController::put'
+  methods: [PUT]
+  requirements:
+    _lws_access: 'resource'
+  options:
+    _lws: TRUE
+    _auth: ['lws_bearer']
+    no_cache: TRUE
+    parameters:
+      lws_storage:
+        type: lws_storage
+
+lws_storage.linkset.patch:
+  path: '/_lws/meta'
+  defaults:
+    _controller: '\Drupal\lws_storage\Controller\LinksetController::patch'
+  methods: [PATCH]
   requirements:
     _lws_access: 'resource'
   options:

@@ -263,7 +263,7 @@ final class StorageHttpTest extends LwsStorageKernelTestBase {
     $put = $this->send('PUT', '/lws/alice/root/', ['Authorization' => '']);
     $this->assertProblem($put, 405, self::STORAGE . 'root/');
     $this->assertSame('GET, HEAD, POST, OPTIONS', $put->headers->get('Allow'));
-    $this->assertProblem($this->send('PATCH', '/lws/alice/root/missing'), 405, self::STORAGE . 'root/missing');
+    $this->assertProblem($this->send('PATCH', '/lws/alice/root/missing/'), 405, self::STORAGE . 'root/missing/');
   }
 
   /**

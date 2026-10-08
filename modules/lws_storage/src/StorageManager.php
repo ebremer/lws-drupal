@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Drupal\lws_storage;
 
+use Drupal\Component\Datetime\TimeInterface;
 use Drupal\Component\Uuid\UuidInterface;
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Database\Connection;
@@ -21,6 +22,7 @@ use Drupal\lws_storage\Content\ContentStore;
 use Drupal\lws_storage\Content\StoredContent;
 use Drupal\lws_storage\Entity\LwsResourceInterface;
 use Drupal\lws_storage\Entity\LwsStorageInterface;
+use Drupal\lws_storage\Linkset\UserMetadata;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 
 /**
@@ -49,6 +51,7 @@ final class StorageManager {
     private readonly QueueFactory $queueFactory,
     private readonly ConfigFactoryInterface $configFactory,
     private readonly UuidInterface $uuid,
+    private readonly TimeInterface $time,
   ) {}
 
   /**
@@ -153,12 +156,14 @@ final class StorageManager {
    *   For a data resource, the media type of its content.
    * @param \Drupal\lws\Agent\RequestingAgent|null $agent
    *   The creating agent, recorded for audit.
+   * @param \Drupal\lws_storage\Linkset\UserMetadata|null $metadata
+   *   The links clients manage, from the request's Link headers.
    *
    * @throws \Drupal\lws\Http\LwsHttpException
    *   404 if the container was deleted meanwhile, 413 for a body too large,
    *   422 for content a file validator rejects, 507 beyond the quota.
    */
-  public function createResource(LwsResourceInterface $parent, ?string $hint, bool $container, $body = NULL, string $mediaType = 'application/octet-stream', ?RequestingAgent $agent = NULL): LwsResourceInterface {
+  public function createResource(LwsResourceInterface $parent, ?string $hint, bool $container, $body = NULL, string $mediaType = 'application/octet-stream', ?RequestingAgent $agent = NULL, ?UserMetadata $metadata = NULL): LwsResourceInterface {
     $uuid = $this->uuid->generate();
     $content = NULL;
     if (!$container) {
@@ -173,7 +178,7 @@ final class StorageManager {
           continue;
         }
         try {
-          return $this->insert($parent, $name, $uuid, $content, $mediaType, $agent);
+          return $this->insert($parent, $name, $uuid, $content, $mediaType, $agent, $metadata);
         }
         catch (EntityStorageException $e) {
           // A concurrent create took the name; try the next one.
@@ -204,6 +209,9 @@ final class StorageManager {
    * @param callable(\Drupal\lws_storage\Entity\LwsResourceInterface): void|null $precondition
    *   Checks the request's preconditions against the resource as it is once
    *   locked, and throws to refuse.
+   * @param \Drupal\lws_storage\Linkset\UserMetadata|null $metadata
+   *   With "Prefer: set-linkset", the links clients manage that replace the
+   *   current ones, in the same transaction.
    *
    * @return \Drupal\lws_storage\Entity\LwsResourceInterface
    *   The resource with its new content.
@@ -212,7 +220,7 @@ final class StorageManager {
    *   404 if it was deleted meanwhile, 413, 422 or 507 as for creates, and
    *   whatever the precondition throws.
    */
-  public function replaceContent(LwsResourceInterface $resource, $body, ?string $mediaType, ?callable $precondition = NULL): LwsResourceInterface {
+  public function replaceContent(LwsResourceInterface $resource, $body, ?string $mediaType, ?callable $precondition = NULL, ?UserMetadata $metadata = NULL): LwsResourceInterface {
     if ($resource->isContainer()) {
       throw new \InvalidArgumentException('Only data resources have content.');
     }
@@ -232,22 +240,7 @@ final class StorageManager {
       if ($precondition !== NULL) {
         $precondition($current);
       }
-      $previous = $current->getContentFile();
-      $this->charge($current->getLwsStorageId(), $content->size - ($previous?->getSize() ?? 0));
-      $file = $this->newFile($content, $current->getName(), $mediaType);
-      $current->set('content', $file->id());
-      $current->set('content_sha256', $content->sha256);
-      $current->set('version', $current->getVersion() + 1);
-      $current->save();
-      // Listings show a member's size, format and modification time.
-      $parent = $current->getParent();
-      if ($parent !== NULL) {
-        $this->resources->touch($parent);
-      }
-      if ($previous !== NULL) {
-        $fid = (int) $previous->id();
-        $this->database->transactionManager()->addPostTransactionCallback(fn () => $this->releaseFile($fid));
-      }
+      $this->swap($current, $content, $mediaType, $metadata);
     }
     catch (\Throwable $e) {
       $transaction->rollBack();
@@ -256,6 +249,124 @@ final class StorageManager {
       throw $e;
     }
     return $current;
+  }
+
+  /**
+   * Changes the content of a data resource, as it is once locked.
+   *
+   * For PATCH: the change is computed from the current content inside the
+   * transaction, so that no concurrent write can be lost.
+   *
+   * @param \Drupal\lws_storage\Entity\LwsResourceInterface $resource
+   *   The data resource.
+   * @param \Closure(string): string $change
+   *   Makes the new content from the current; throws to refuse.
+   * @param callable(\Drupal\lws_storage\Entity\LwsResourceInterface): void|null $precondition
+   *   Checks the request's preconditions against the locked resource.
+   * @param \Drupal\lws_storage\Linkset\UserMetadata|null $metadata
+   *   With "Prefer: set-linkset", the links clients manage to add, in the
+   *   same transaction.
+   *
+   * @return \Drupal\lws_storage\Entity\LwsResourceInterface
+   *   The resource with its new content.
+   */
+  public function changeContent(LwsResourceInterface $resource, \Closure $change, ?callable $precondition = NULL, ?UserMetadata $metadata = NULL): LwsResourceInterface {
+    if ($resource->isContainer()) {
+      throw new \InvalidArgumentException('Only data resources have content.');
+    }
+    $content = NULL;
+    $transaction = $this->database->startTransaction();
+    try {
+      $current = $this->lock($resource);
+      if ($precondition !== NULL) {
+        $precondition($current);
+      }
+      $uri = $current->getContentFile()?->getFileUri();
+      $bytes = $uri === NULL ? FALSE : @file_get_contents($uri);
+      if ($bytes === FALSE) {
+        throw new \RuntimeException(sprintf('The content of resource %s cannot be read.', $current->uuid()));
+      }
+      $stream = fopen('php://temp', 'w+b');
+      if ($stream === FALSE) {
+        throw new \RuntimeException('No temporary stream.');
+      }
+      fwrite($stream, $change($bytes));
+      rewind($stream);
+      $content = $this->content->write($stream, $this->storageUuid($current), (string) $current->uuid());
+      $mediaType = $current->getMediaType() ?? 'application/octet-stream';
+      $this->validate($content, $mediaType);
+      $this->swap($current, $content, $mediaType, $metadata === NULL ? NULL : $current->getUserMetadata()->with($metadata));
+    }
+    catch (\Throwable $e) {
+      $transaction->rollBack();
+      $this->forget($resource, $resource->getParent());
+      if ($content !== NULL) {
+        $this->content->delete($content->uri);
+      }
+      throw $e;
+    }
+    return $current;
+  }
+
+  /**
+   * Changes the links clients manage of a resource, as it is once locked.
+   *
+   * @param \Drupal\lws_storage\Entity\LwsResourceInterface $resource
+   *   The resource.
+   * @param \Closure(\Drupal\lws_storage\Entity\LwsResourceInterface): \Drupal\lws_storage\Linkset\UserMetadata $change
+   *   Makes the new links from the locked resource; throws to refuse.
+   * @param callable(\Drupal\lws_storage\Entity\LwsResourceInterface): void|null $precondition
+   *   Checks the request's preconditions against the locked resource.
+   *
+   * @return \Drupal\lws_storage\Entity\LwsResourceInterface
+   *   The resource with its new links.
+   */
+  public function changeMetadata(LwsResourceInterface $resource, \Closure $change, ?callable $precondition = NULL): LwsResourceInterface {
+    $transaction = $this->database->startTransaction();
+    try {
+      $current = $this->lock($resource);
+      if ($precondition !== NULL) {
+        $precondition($current);
+      }
+      $current->setUserMetadata($change($current), $this->time->getRequestTime());
+      $current->save();
+      // Listings show members' types.
+      $parent = $current->getParent();
+      if ($parent !== NULL) {
+        $this->resources->touch($parent);
+      }
+    }
+    catch (\Throwable $e) {
+      $transaction->rollBack();
+      $this->forget($resource, $resource->getParent());
+      throw $e;
+    }
+    return $current;
+  }
+
+  /**
+   * Points a locked data resource at new content, inside the transaction.
+   */
+  private function swap(LwsResourceInterface $current, StoredContent $content, string $mediaType, ?UserMetadata $metadata): void {
+    $previous = $current->getContentFile();
+    $this->charge($current->getLwsStorageId(), $content->size - ($previous?->getSize() ?? 0));
+    $file = $this->newFile($content, $current->getName(), $mediaType);
+    $current->set('content', $file->id());
+    $current->set('content_sha256', $content->sha256);
+    $current->set('version', $current->getVersion() + 1);
+    if ($metadata !== NULL) {
+      $current->setUserMetadata($metadata, $this->time->getRequestTime());
+    }
+    $current->save();
+    // Listings show a member's size, format, types and modification time.
+    $parent = $current->getParent();
+    if ($parent !== NULL) {
+      $this->resources->touch($parent);
+    }
+    if ($previous !== NULL) {
+      $fid = (int) $previous->id();
+      $this->database->transactionManager()->addPostTransactionCallback(fn () => $this->releaseFile($fid));
+    }
   }
 
   /**
@@ -356,7 +467,7 @@ final class StorageManager {
    * @throws \Drupal\Core\Entity\EntityStorageException
    *   With an integrity constraint violation when the name is taken.
    */
-  private function insert(LwsResourceInterface $parent, string $name, string $uuid, ?StoredContent $content = NULL, string $mediaType = 'application/octet-stream', ?RequestingAgent $agent = NULL): LwsResourceInterface {
+  private function insert(LwsResourceInterface $parent, string $name, string $uuid, ?StoredContent $content = NULL, string $mediaType = 'application/octet-stream', ?RequestingAgent $agent = NULL, ?UserMetadata $metadata = NULL): LwsResourceInterface {
     $transaction = $this->database->startTransaction();
     try {
       // Update the parent first, which locks it: if a recursive delete
@@ -380,6 +491,9 @@ final class StorageManager {
       }
       $resource = $this->entityTypeManager->getStorage('lws_resource')->create($values);
       assert($resource instanceof LwsResourceInterface);
+      if ($metadata !== NULL && !$metadata->isEmpty()) {
+        $resource->setUserMetadata($metadata, $this->time->getRequestTime());
+      }
       $resource->save();
       return $resource;
     }

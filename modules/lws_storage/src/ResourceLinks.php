@@ -48,14 +48,17 @@ final class ResourceLinks {
    * The server-managed links of a resource (LWS Core §8.1, §9.1).
    *
    * @return list<string>
-   *   Link header values: the storage, the LWS class, the parent container,
-   *   and the linkset.
+   *   Link header values: the storage, the LWS class and the types clients
+   *   declared, the parent container, and the linkset.
    */
   public function headers(LwsStorageInterface $storage, LwsResourceInterface $resource): array {
     $links = [
       LinkHeader::format($this->urls->storageUri($storage->getSlug()), LinkRelation::STORAGE),
       LinkHeader::format($this->type($resource), LinkRelation::TYPE),
     ];
+    foreach ($resource->getUserMetadata()->types as $type) {
+      $links[] = LinkHeader::format($type, LinkRelation::TYPE);
+    }
     $parent = $resource->getParent();
     if ($parent !== NULL) {
       $links[] = LinkHeader::format($this->uri($storage, $parent), LinkRelation::UP);

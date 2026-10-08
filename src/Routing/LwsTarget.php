@@ -97,7 +97,8 @@ final class LwsTarget {
    *
    * Depends only on the shape of the URL, never on whether the resource
    * exists, so that OPTIONS cannot reveal existence. Containers take POST,
-   * data resources PUT; the root container cannot be deleted.
+   * data resources PUT and PATCH, linksets PUT and PATCH; the root container
+   * cannot be deleted.
    *
    * @return list<string>
    *   HTTP method names.
@@ -107,9 +108,10 @@ final class LwsTarget {
       LwsArea::Resource => match (TRUE) {
         $this->isRoot() => ['GET', 'HEAD', 'POST', 'OPTIONS'],
         $this->container => ['GET', 'HEAD', 'POST', 'DELETE', 'OPTIONS'],
-        default => ['GET', 'HEAD', 'PUT', 'DELETE', 'OPTIONS'],
+        default => ['GET', 'HEAD', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
       },
-      LwsArea::Description, LwsArea::Meta => ['GET', 'HEAD', 'OPTIONS'],
+      LwsArea::Meta => ['GET', 'HEAD', 'PUT', 'PATCH', 'OPTIONS'],
+      LwsArea::Description => ['GET', 'HEAD', 'OPTIONS'],
       LwsArea::Unknown, LwsArea::Malformed => [],
     };
   }

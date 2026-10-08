@@ -26,7 +26,13 @@ services:
       - '@queue'
       - '@config.factory'
       - '@uuid'
+      - '@datetime.time'
   Drupal\lws_storage\StorageManager: '@lws_storage.storage_manager'
+
+  lws_storage.linksets:
+    class: Drupal\lws_storage\Linkset\Linksets
+    arguments: ['@lws_storage.resource_links']
+  Drupal\lws_storage\Linkset\Linksets: '@lws_storage.linksets'
 
   lws_storage.resource_links:
     class: Drupal\lws_storage\ResourceLinks

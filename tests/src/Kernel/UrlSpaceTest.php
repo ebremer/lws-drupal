@@ -119,8 +119,8 @@ final class UrlSpaceTest extends KernelTestBase {
       '/lws/alice/' => 'GET, HEAD, OPTIONS',
       '/lws/alice/root/' => 'GET, HEAD, POST, OPTIONS',
       '/lws/alice/root/notes/' => 'GET, HEAD, POST, DELETE, OPTIONS',
-      '/lws/alice/root/notes' => 'GET, HEAD, PUT, DELETE, OPTIONS',
-      '/lws/alice/meta/0b8f6a52-5ab1-4d2b-9a0a-3f6a1c2d4e5f' => 'GET, HEAD, OPTIONS',
+      '/lws/alice/root/notes' => 'GET, HEAD, PUT, PATCH, DELETE, OPTIONS',
+      '/lws/alice/meta/0b8f6a52-5ab1-4d2b-9a0a-3f6a1c2d4e5f' => 'GET, HEAD, PUT, PATCH, OPTIONS',
     ];
     foreach ($allow as $path => $methods) {
       $response = $this->send('OPTIONS', $path);

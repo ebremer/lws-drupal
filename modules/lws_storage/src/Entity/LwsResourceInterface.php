@@ -7,6 +7,7 @@ namespace Drupal\lws_storage\Entity;
 use Drupal\Core\Entity\ContentEntityInterface;
 use Drupal\Core\Entity\EntityChangedInterface;
 use Drupal\file\FileInterface;
+use Drupal\lws_storage\Linkset\UserMetadata;
 
 /**
  * A container or data resource in an LWS storage.
@@ -57,6 +58,26 @@ interface LwsResourceInterface extends ContentEntityInterface, EntityChangedInte
    * It changes with the resource and, for a container, with its membership.
    */
   public function getVersion(): int;
+
+  /**
+   * The links clients manage: user types and other relations.
+   */
+  public function getUserMetadata(): UserMetadata;
+
+  /**
+   * Replaces the links clients manage.
+   *
+   * @param \Drupal\lws_storage\Linkset\UserMetadata $metadata
+   *   The new links.
+   * @param int $time
+   *   When they changed.
+   */
+  public function setUserMetadata(UserMetadata $metadata, int $time): static;
+
+  /**
+   * When the links clients manage last changed, or else when it was created.
+   */
+  public function getMetadataChangedTime(): int;
 
   /**
    * The managed file with the current content of a data resource.

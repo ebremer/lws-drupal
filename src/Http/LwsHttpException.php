@@ -63,9 +63,14 @@ final class LwsHttpException extends HttpException {
 
   /**
    * Creates a 415 Unsupported Media Type error.
+   *
+   * @param string $detail
+   *   Why.
+   * @param list<string> $acceptPatch
+   *   The patch formats the resource takes, for Accept-Patch.
    */
-  public static function unsupportedMediaType(string $detail): self {
-    return new self(415, $detail);
+  public static function unsupportedMediaType(string $detail, array $acceptPatch = []): self {
+    return new self(415, $detail, NULL, $acceptPatch === [] ? [] : ['Accept-Patch' => implode(', ', $acceptPatch)]);
   }
 
   /**

@@ -18,13 +18,18 @@ use Drupal\lws\Routing\LwsTarget;
 use Drupal\lws_storage\Entity\LwsResourceInterface;
 use Drupal\lws_storage\Entity\LwsStorageInterface;
 use Drupal\lws_storage\Http\ContentResponse;
+use Drupal\lws_storage\Http\JsonPatches;
+use Drupal\lws_storage\Linkset\Linksets;
 use Drupal\lws_storage\Listing\ContainerPager;
 use Drupal\lws_storage\ResourceLinks;
 use Drupal\lws_storage\ResourceRepository;
 use Drupal\lws_storage\StorageManager;
 use Ebremer\Lws\Http\LinkHeader;
+use Ebremer\Lws\Json\Json;
+use Ebremer\Lws\Json\JsonPatchException;
 use Ebremer\Lws\LinkRelation;
 use Ebremer\Lws\MediaType;
+use Ebremer\Lws\Prefer;
 use Ebremer\Lws\ResourceType;
 use Ebremer\Lws\Vocabulary;
 use Psr\Log\LoggerInterface;
@@ -45,6 +50,11 @@ final class ResourceController implements ContainerInjectionInterface {
   private const CONTAINER_MEDIA_TYPES = [MediaType::LWS_JSON, MediaType::LD_JSON, MediaType::JSON];
 
   /**
+   * The largest JSON resource a patch is applied to, in bytes.
+   */
+  private const MAX_PATCHABLE_BYTES = 16777216;
+
+  /**
    * A media type, with any parameters (RFC 9110 §8.3.1).
    */
   private const MEDIA_TYPE = '/^[A-Za-z0-9!#$&^_.+-]+\/[A-Za-z0-9!#$&^_.+-]+(\s*;\s*[A-Za-z0-9!#$&^_.+-]+=("[^"]*"|[A-Za-z0-9!#$&^_.+-]+))*$/';
@@ -54,6 +64,7 @@ final class ResourceController implements ContainerInjectionInterface {
     private readonly StorageManager $manager,
     private readonly ResourceLinks $links,
     private readonly ContainerPager $pager,
+    private readonly Linksets $linksets,
     private readonly AccessDecisionInterface $decisions,
     private readonly ConfigFactoryInterface $configFactory,
     #[Autowire(service: 'logger.channel.lws')]
@@ -79,9 +90,10 @@ final class ResourceController implements ContainerInjectionInterface {
    */
   public function post(LwsStorageInterface $lws_storage, LwsTarget $lws_target, Request $request): Response {
     $parent = $this->resources->findByTarget($lws_storage, $lws_target) ?? throw LwsHttpException::notFound();
+    $links = self::requestLinks($request);
     $container = FALSE;
-    foreach (LinkHeader::parse(array_filter($request->headers->all('link'), 'is_string')) as $link) {
-      if ($link->hasRel(LinkRelation::TYPE) && $link->href === ResourceType::CONTAINER) {
+    foreach ($links as $link) {
+      if ($link->rel === LinkRelation::TYPE && $link->href === ResourceType::CONTAINER && !isset($link->params['anchor'])) {
         $container = TRUE;
       }
     }
@@ -93,6 +105,8 @@ final class ResourceController implements ContainerInjectionInterface {
       $container ? NULL : $this->body($request),
       $mediaType,
       Authentication::fromRequest($request)->agent,
+      // Other links become the resource's initial metadata (§9.2).
+      $this->linksets->fromLinkHeaders($links),
     );
     $this->log('Created', $lws_storage, $resource, $request);
 
@@ -108,14 +122,56 @@ final class ResourceController implements ContainerInjectionInterface {
   public function put(LwsStorageInterface $lws_storage, LwsTarget $lws_target, Request $request): Response {
     $resource = $this->resources->findByTarget($lws_storage, $lws_target) ?? throw LwsHttpException::notFound();
     $this->requireIfMatch($request);
+    $setLinkset = self::prefersSetLinkset($request);
     $updated = $this->manager->replaceContent(
       $resource,
       $this->body($request),
       $this->mediaType($request),
       fn (LwsResourceInterface $current) => $this->checkPreconditions($request, $current),
+      $setLinkset ? $this->linksets->fromLinkHeaders(self::requestLinks($request)) : NULL,
     );
     $this->log('Replaced', $lws_storage, $updated, $request);
-    return LwsResponse::empty(Response::HTTP_NO_CONTENT, [], $updated->getEtag());
+    return LwsResponse::empty(Response::HTTP_NO_CONTENT, [], $updated->getEtag(), $setLinkset ? ['Preference-Applied' => Prefer::SET_LINKSET] : []);
+  }
+
+  /**
+   * Patches a JSON data resource with a JSON Patch (§9.4, RFC 6902).
+   *
+   * The patch applies to the content as it is once the resource is locked,
+   * all or nothing: a failed "test" or a missing location is a 409.
+   */
+  public function patch(LwsStorageInterface $lws_storage, LwsTarget $lws_target, Request $request): Response {
+    $resource = $this->resources->findByTarget($lws_storage, $lws_target) ?? throw LwsHttpException::notFound();
+    if (!JsonPatches::isJson((string) $resource->getMediaType())) {
+      throw LwsHttpException::unsupportedMediaType('Only JSON resources can be patched; replace others with PUT.');
+    }
+    $patch = JsonPatches::fromRequest($request);
+    $this->requireIfMatch($request);
+    $setLinkset = self::prefersSetLinkset($request);
+    $updated = $this->manager->changeContent(
+      $resource,
+      static function (string $content) use ($patch): string {
+        if (strlen($content) > self::MAX_PATCHABLE_BYTES) {
+          throw LwsHttpException::unprocessable('The resource is too large to patch; replace it with PUT.');
+        }
+        try {
+          $document = Json::decode($content);
+        }
+        catch (\JsonException) {
+          throw LwsHttpException::unprocessable('The content of the resource is not JSON, so it cannot be patched.');
+        }
+        try {
+          return Json::encode($patch->apply($document));
+        }
+        catch (JsonPatchException $e) {
+          throw LwsHttpException::conflict($e->getMessage());
+        }
+      },
+      fn (LwsResourceInterface $current) => $this->checkPreconditions($request, $current),
+      $setLinkset ? $this->linksets->fromLinkHeaders(self::requestLinks($request)) : NULL,
+    );
+    $this->log('Patched', $lws_storage, $updated, $request);
+    return LwsResponse::empty(Response::HTTP_NO_CONTENT, [], $updated->getEtag(), $setLinkset ? ['Preference-Applied' => Prefer::SET_LINKSET] : []);
   }
 
   /**
@@ -183,8 +239,10 @@ final class ResourceController implements ContainerInjectionInterface {
 
     $items = [];
     foreach ($page->members as $member) {
+      $class = $member->isContainer() ? 'Container' : 'DataResource';
+      $types = $member->getUserMetadata()->types;
       $item = [
-        'type' => $member->isContainer() ? 'Container' : 'DataResource',
+        'type' => $types === [] ? $class : [$class, ...$types],
         'id' => $this->links->uri($storage, $member),
       ];
       if (!$member->isContainer()) {
@@ -220,6 +278,9 @@ final class ResourceController implements ContainerInjectionInterface {
       'Content-Security-Policy' => 'sandbox',
       'X-Content-Type-Options' => 'nosniff',
     ];
+    if (JsonPatches::isJson((string) $resource->getMediaType())) {
+      $headers['Accept-Patch'] = implode(', ', JsonPatches::ACCEPTED);
+    }
     $notModified = $this->notModified($request, $resource, $this->links->headers($storage, $resource), $headers);
     if ($notModified !== NULL) {
       return $notModified;
@@ -272,6 +333,30 @@ final class ResourceController implements ContainerInjectionInterface {
     if (Preconditions::evaluate($request, $current->getEtag(), $current->getChangedTime()) !== NULL) {
       throw LwsHttpException::preconditionFailed();
     }
+  }
+
+  /**
+   * The Link headers of a request.
+   *
+   * @return list<\Ebremer\Lws\Http\Link>
+   *   The links.
+   */
+  private static function requestLinks(Request $request): array {
+    return LinkHeader::parse(array_filter($request->headers->all('link'), 'is_string'));
+  }
+
+  /**
+   * Whether a request asks for its Link headers to update the linkset too.
+   */
+  private static function prefersSetLinkset(Request $request): bool {
+    foreach ($request->headers->all('prefer') as $value) {
+      foreach (preg_split('/\s*[,;]\s*/', strtolower((string) $value)) ?: [] as $preference) {
+        if ($preference === Prefer::SET_LINKSET) {
+          return TRUE;
+        }
+      }
+    }
+    return FALSE;
   }
 
   /**

@@ -13,6 +13,7 @@ use Drupal\Core\Field\BaseFieldDefinition;
 use Drupal\Core\StringTranslation\TranslatableMarkup;
 use Drupal\file\FileInterface;
 use Drupal\lws\Http\LwsResponse;
+use Drupal\lws_storage\Linkset\UserMetadata;
 use Drupal\lws_storage\LwsResourceStorageSchema;
 use Drupal\views\EntityViewsData;
 
@@ -115,6 +116,19 @@ class LwsResource extends ContentEntityBase implements LwsResourceInterface {
       ->setLabel(new TranslatableMarkup('Creator client'))
       ->setDescription(new TranslatableMarkup('The client the creating agent used. For audit only.'));
 
+    $fields['types'] = BaseFieldDefinition::create('uri')
+      ->setLabel(new TranslatableMarkup('Types'))
+      ->setDescription(new TranslatableMarkup('The types clients declared with rel="type" links, other than LWS classes.'))
+      ->setCardinality(BaseFieldDefinition::CARDINALITY_UNLIMITED);
+
+    $fields['links'] = BaseFieldDefinition::create('string_long')
+      ->setLabel(new TranslatableMarkup('Links'))
+      ->setDescription(new TranslatableMarkup('The other links clients manage in the linkset, as JSON: RFC 9264 targets by relation type.'));
+
+    $fields['meta_changed'] = BaseFieldDefinition::create('timestamp')
+      ->setLabel(new TranslatableMarkup('Metadata changed'))
+      ->setDescription(new TranslatableMarkup('When the links clients manage last changed.'));
+
     $fields['version'] = BaseFieldDefinition::create('integer')
       ->setLabel(new TranslatableMarkup('Version'))
       ->setSetting('unsigned', TRUE)
@@ -206,6 +220,32 @@ class LwsResource extends ContentEntityBase implements LwsResourceInterface {
    */
   public function getVersion(): int {
     return (int) $this->get('version')->value;
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function getUserMetadata(): UserMetadata {
+    $types = array_values(array_map(static fn (array $item): string => (string) $item['value'], $this->get('types')->getValue()));
+    $links = json_decode((string) $this->get('links')->value, TRUE);
+    return new UserMetadata($types, is_array($links) ? $links : []);
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function setUserMetadata(UserMetadata $metadata, int $time): static {
+    $this->set('types', $metadata->types);
+    $this->set('links', $metadata->links === [] ? NULL : json_encode($metadata->links, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
+    $this->set('meta_changed', $time);
+    return $this;
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function getMetadataChangedTime(): int {
+    return (int) ($this->get('meta_changed')->value ?? $this->get('created')->value);
   }
 
   /**

@@ -1041,8 +1041,9 @@ only), and these parts work without its HTTP layer:
 
 **Gaps to close upstream in `lws-client`.** Each would help clients as well.
 
-1. **`JsonPatch::apply()`.** An RFC 6902 applier: atomic, with `test` semantics. Test it with the
-   client's `conformance/fixtures/json-patch.json` and the community `json-patch-tests`.
+1. **`JsonPatch::apply()`.** An RFC 6902 applier: atomic, with `test` semantics. *Written with S4,*
+   with a new cross-language fixture, `conformance/fixtures/json-patch-apply.json` (RFC 6902
+   Appendix A and edge cases), rather than the community suite.
 2. **RSA verification (RS256, PS256) in `VerificationKey`.** Most OpenID providers sign with RS256
    by default, Keycloak included. Today the client verifies only ES256, ES384 and EdDSA.
 3. **A `WebhookSigner`**, the counterpart of `WebhookVerifier`.
@@ -1246,6 +1247,36 @@ with no adapters.
 - **Spec:** §9.1, §9.2 (initial metadata), §9.4.
 - **Exit:** the JSON Patch fixture suite passes. Linkset round-trips go through
   `Model\Linkset::parse()`.
+
+**Done.** Differences from the plan above:
+
+- **Built as planned:**
+  - linksets take `PUT` (`application/linkset+json`) and `PATCH` (JSON Patch on the document a
+    `GET` returns), conditionally (`412`); the result must be a linkset of the resource (`422`),
+    and server-managed relations (`up`, `linkset`, `lws#storage`, the pagination relations, LWS
+    classes among the types) cannot change (`409`). A `PUT` may leave them out;
+  - user types and other relations from a create's `Link` headers, with target attributes as
+    RFC 9264 §4.2.4 says; server-managed relations and links with an `anchor` are ignored;
+  - `Prefer: set-linkset` on `PUT` (replace) and `PATCH` (add), atomic with the content, answered
+    with `Preference-Applied`;
+  - `PATCH` on JSON resources (`application/json` and `+json`): applied to the content as it is
+    once the resource is locked, all or nothing; a failed `test` or a missing location is `409`,
+    content that is not JSON `422`, another patch format `415` with `Accept-Patch`;
+  - `Accept-Patch` on JSON resources and linksets, and the `PatchSupport` capability;
+  - user types in `Link` headers and in listings (`"type": ["DataResource", "…"]`).
+- **Left out:** JSON Merge Patch (optional), and `Prefer: PreferLinkRelations` on linkset reads,
+  which the plan allowed to slip.
+- **Built differently:** the linkset entity tag is a digest of the document alone, the same for
+  `application/linkset+json` and `application/json`, so conditional writes work whichever was read.
+  There is no `links_version`.
+- **Exit criteria:** the client's apply fixture (50 cases) passes in `lws-client` and again through
+  HTTP `PATCH` against Drupal. Linkset round trips are parsed with `Model\Linkset::parse()`.
+- **Touchstone:** data resources 17/17 and linksets 8/8 (the ninth applies only to servers without
+  linkset `PUT`); `core` has 83 passed, the only failures being the authorization server's (A2).
+  `quickstart.php`, with a bearer token in place of token exchange, runs green with its `PATCH`.
+- **`lws-client` must be released first:** the module now needs `JsonPatch::apply()`, so CI, which
+  installs `lws-client` `dev-main` from GitHub, passes only once that change is pushed.
+- **Verified:** 276 tests.
 
 **S5. Hardening and the admin UI.**
 
@@ -1497,9 +1528,9 @@ makes. Where `lws-server` (the Java implementation) chose differently, that is n
 3. **Q3. Should Drupal also be an identity provider?** `lws_identity` (CID documents for users,
    with OpenID through `simple_oauth`) would make the site a complete stack. Is that in scope, or
    is the Keycloak `lws-authn` the IdP?
-4. **Q4. Coupling to `ebremer/lws-client`.** *Decided 2026-10-08: reuse it.* The client still
-   needs `JsonPatch::apply()` (by S4), RSA verification (by A5), a `WebhookSigner` (by S6), and a
-   tagged release on Packagist (before a drupal.org release).
+4. **Q4. Coupling to `ebremer/lws-client`.** *Decided 2026-10-08: reuse it.* `JsonPatch::apply()`
+   was added with S4. The client still needs RSA verification (by A5), a `WebhookSigner` (by S6),
+   and a tagged release on Packagist (before a drupal.org release).
 5. **Q5. Separate storage hostname.** Should it be a hard requirement, or a recommendation with a
    status-report warning (as designed)?
 6. **Q6. DPoP.** `lws-server` supports DPoP-bound tokens. Is DPoP wanted for 1.0, or later (A6)?

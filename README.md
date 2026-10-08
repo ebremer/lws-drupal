@@ -13,8 +13,8 @@ is in [DESIGN.md](DESIGN.md).
 
 ## Status
 
-**Step S3, pagination** (DESIGN.md §10), after S1, storages, A1, access tokens,
-and S2, data resources. Storages are created with Drush; everything in them is managed over HTTP
+**Step S4, metadata and JSON Patch** (DESIGN.md §10), after S1, storages, A1,
+access tokens, S2, data resources, and S3, pagination. Storages are created with Drush; everything in them is managed over HTTP
 by their controllers:
 
 | Request | Response |
@@ -24,8 +24,10 @@ by their controllers:
 | `GET`/`HEAD` a data resource | Its bytes, with byte ranges (`206`, `416`) |
 | `POST` to a container | `201` and `Location`: a data resource from the body, or a container with `Link: <https://www.w3.org/ns/lws#Container>; rel="type"`. The `Slug` header suggests the name |
 | `PUT` a data resource | `204`: its content replaced. There is no create-by-`PUT` |
+| `PATCH` a JSON data resource | `204`: a JSON Patch (`application/json-patch+json`) applied, all or nothing (`409` if a `test` fails) |
 | `DELETE` | `204`. A container that is not empty needs `Depth: infinity` (`409` otherwise) |
-| `GET /lws/{storage}/meta/{uuid}` | The linkset of a resource (`application/linkset+json`), read-only until step S4 |
+| `GET`, `PUT`, `PATCH /lws/{storage}/meta/{uuid}` | The linkset of a resource (`application/linkset+json`): its parent and types, and the links clients manage. Server-managed links cannot change (`409`) |
+| `Link` headers on `POST`; with `Prefer: set-linkset`, on `PUT` and `PATCH` | Set the links clients manage, such as types (`rel="type"`) and licenses |
 | `If-Match`, `If-None-Match`, `If-(Un)Modified-Since` | `304` or `412` as RFC 9110 says |
 | No token, or a rejected one | `401` with a Bearer challenge: `as_uri` (the authorization server), `realm` (the storage) and, for a rejected token, `error` |
 | A valid token of anyone else | `403` |
@@ -34,8 +36,8 @@ by their controllers:
 Successful responses carry `ETag` and `Link` headers (storage, type, parent,
 linkset), and errors are RFC 9457 problem details. Content is kept as managed
 files in the private file system and never served through Drupal's own file
-routes. Access for agents other than controllers comes with step A3, `PATCH` and
-writable linksets with S4.
+routes. Access for agents other than controllers comes with step A3, and
+Drupal's own authorization server with A2.
 
 ```sh
 drush lws:as:add main https://as.example --default    # trust an authorization server
@@ -70,8 +72,8 @@ $settings['lws_outbound_allowlist'] = ['http://localhost:8080'];
 ## Requirements
 
 - Drupal 11.3 or later, PHP 8.3 or later.
-- [`ebremer/lws-client`](https://github.com/ebremer/lws-client), which is not on
-  Packagist yet and has no release. A site that installs this module must name
+- [`ebremer/lws-client`](https://github.com/ebremer/lws-client), with
+  `JsonPatch::apply()`, which is not on Packagist yet and has no release. A site that installs this module must name
   its repository and require its `main` branch itself:
 
   ```sh

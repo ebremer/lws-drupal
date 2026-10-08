@@ -136,7 +136,7 @@ final class ResourceOperationsTest extends LwsStorageKernelTestBase {
     $this->assertSame($etag, $read->getEtag());
     $this->assertNotNull($read->getLastModified());
     $this->assertSame('bytes', $read->headers->get('Accept-Ranges'));
-    $this->assertSame('GET, HEAD, PUT, DELETE, OPTIONS', $read->headers->get('Allow'));
+    $this->assertSame('GET, HEAD, PUT, PATCH, DELETE, OPTIONS', $read->headers->get('Allow'));
     $this->assertSame('sandbox', $read->headers->get('Content-Security-Policy'));
     $this->assertSame('nosniff', $read->headers->get('X-Content-Type-Options'));
     $this->assertSame($this->links($response), $this->links($read));
@@ -227,7 +227,7 @@ final class ResourceOperationsTest extends LwsStorageKernelTestBase {
     $file = $this->post('/lws/alice/root/', 'x', ['Slug' => 'file.txt']);
     $response = $this->send('POST', $this->path($file), ['Content-Type' => 'text/plain'], 'x');
     $this->assertProblem($response, 405, $file);
-    $this->assertSame('GET, HEAD, PUT, DELETE, OPTIONS', $response->headers->get('Allow'));
+    $this->assertSame('GET, HEAD, PUT, PATCH, DELETE, OPTIONS', $response->headers->get('Allow'));
     $this->assertProblem($this->send('POST', '/lws/alice/root/', ['Content-Type' => 'not a type'], 'x'), 400, self::ROOT);
     $this->assertProblem($this->send('POST', '/lws/alice/root/', ['Content-Type' => 'multipart/form-data; boundary=x'], 'x'), 415, self::ROOT);
     $this->assertCount(1, $this->listing(self::ROOT)->items);
@@ -432,7 +432,7 @@ final class ResourceOperationsTest extends LwsStorageKernelTestBase {
     $response = $this->send('GET', $this->path($linkset));
     $this->assertSame(200, $response->getStatusCode());
     $this->assertSame('application/linkset+json', $response->headers->get('Content-Type'));
-    $this->assertSame('GET, HEAD, OPTIONS', $response->headers->get('Allow'));
+    $this->assertSame('GET, HEAD, PUT, PATCH, OPTIONS', $response->headers->get('Allow'));
     $this->assertSame([self::STORAGE], $this->links($response)['https://www.w3.org/ns/lws#storage']);
     $parsed = Linkset::parse($this->json($response));
     $this->assertSame([self::ROOT], $parsed->hrefs('up', $uri));
