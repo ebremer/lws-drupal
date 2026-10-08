@@ -65,7 +65,7 @@ services:
 
   lws_storage.access_check:
     class: Drupal\lws_storage\Access\LwsAccessCheck
-    arguments: ['@Drupal\lws\Access\AccessDecisionInterface', '@lws_storage.resource_links', '@lws_storage.resource_repository']
+    arguments: ['@Drupal\lws\Access\AccessDecisionInterface', '@lws_storage.resource_links', '@lws_storage.resource_repository', '@lws_storage.linksets']
     tags:
       - { name: access_check, applies_to: _lws_access }
 

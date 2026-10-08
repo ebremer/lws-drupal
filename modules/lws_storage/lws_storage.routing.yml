@@ -143,3 +143,36 @@ lws_storage.linkset.patch:
     parameters:
       lws_storage:
         type: lws_storage
+
+# The access page of a storage (DESIGN.md §6.5), by entity ID. Its storage
+# administrators and its owner manage who may do what in it.
+lws_storage.access:
+  path: '/admin/content/lws/{lws_storage}/access'
+  defaults:
+    _controller: '\Drupal\lws_storage\Controller\StorageAccessController::page'
+    _title_callback: '\Drupal\lws_storage\Controller\StorageAccessController::title'
+  requirements:
+    _custom_access: '\Drupal\lws_storage\Controller\StorageAccessController::access'
+    lws_storage: '\d+'
+  options:
+    _admin_route: TRUE
+    parameters:
+      lws_storage:
+        type: entity:lws_storage
+
+lws_storage.access_delete:
+  path: '/admin/content/lws/{lws_storage}/access/{lws_policy}/delete'
+  defaults:
+    _form: '\Drupal\lws_storage\Form\PolicyDeleteForm'
+    _title: 'Remove access'
+  requirements:
+    _custom_access: '\Drupal\lws_storage\Controller\StorageAccessController::access'
+    lws_storage: '\d+'
+    lws_policy: '\d+'
+  options:
+    _admin_route: TRUE
+    parameters:
+      lws_storage:
+        type: entity:lws_storage
+      lws_policy:
+        type: entity:lws_policy

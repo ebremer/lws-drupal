@@ -91,7 +91,18 @@ final class ResourceLinks {
       $ancestors,
       $container,
       $resource?->getMediaType(),
+      $resource === NULL ? [] : $this->types($resource),
     );
+  }
+
+  /**
+   * All the types of a resource: its LWS class, and those its clients set.
+   *
+   * @return list<string>
+   *   The type URIs, as its Link headers give them.
+   */
+  public function types(LwsResourceInterface $resource): array {
+    return array_values(array_unique([$this->type($resource), ...$resource->getUserMetadata()->types]));
   }
 
   /**

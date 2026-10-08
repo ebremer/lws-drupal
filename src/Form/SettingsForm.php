@@ -59,6 +59,12 @@ final class SettingsForm extends ConfigFormBase {
       '#config_target' => 'lws.settings:prefix',
       '#required' => TRUE,
     ];
+    $form['conceal_existence'] = [
+      '#type' => 'checkbox',
+      '#title' => $this->t('Conceal existence'),
+      '#description' => $this->t('Refuse agents with 404 Not Found rather than 403 Forbidden, so that they cannot tell whether a resource they may not access exists (LWS Core §9.5).'),
+      '#config_target' => 'lws.settings:conceal_existence',
+    ];
     return parent::buildForm($form, $form_state);
   }
 

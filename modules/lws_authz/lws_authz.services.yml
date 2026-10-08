@@ -72,6 +72,18 @@ services:
       # space, so it takes nothing from other providers elsewhere.
       - { name: authentication_provider, provider_id: lws_bearer, priority: 200 }
 
+  # The policy decision point (DESIGN.md §6.5).
   lws_authz.access_decision:
-    class: Drupal\lws_authz\Access\ControllerAccessDecision
+    class: Drupal\lws_authz\Access\PolicyAccessDecision
+    arguments: ['@lws_authz.policy_store', '@datetime.time']
   Drupal\lws\Access\AccessDecisionInterface: '@lws_authz.access_decision'
+
+  lws_authz.policy_store:
+    class: Drupal\lws_authz\Policy\PolicyStore
+    arguments: ['@entity_type.manager']
+  Drupal\lws_authz\Policy\PolicyStore: '@lws_authz.policy_store'
+
+  lws_authz.policy_parser:
+    class: Drupal\lws_authz\Policy\AccessPolicyParser
+    arguments: ['@lws.url_parser', '@lws.url_generator']
+  Drupal\lws_authz\Policy\AccessPolicyParser: '@lws_authz.policy_parser'

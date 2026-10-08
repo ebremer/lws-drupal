@@ -5,4 +5,5 @@ package: 'Linked Web Storage'
 core_version_requirement: ^11.3
 configure: entity.lws_trusted_as.collection
 dependencies:
+  - drupal:user
   - lws:lws

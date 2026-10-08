@@ -13,10 +13,11 @@ is in [DESIGN.md](DESIGN.md).
 
 ## Status
 
-**Step A2, the authorization server** (DESIGN.md §10), after S1, storages, A1,
-access tokens, S2, data resources, S3, pagination, and S4, metadata and JSON
-Patch. Storages are created with Drush; everything in them is managed over HTTP
-by their controllers, with access tokens the site issues itself:
+**Step A3, access policies** (DESIGN.md §10), after S1, storages, A1, access
+tokens, S2, data resources, S3, pagination, S4, metadata and JSON Patch, and
+A2, the authorization server. Storages are created with Drush; everything in
+them is managed over HTTP, with access tokens the site issues itself, by their
+controllers and by the agents their access policies allow:
 
 | Request | Response |
 |---|---|
@@ -34,13 +35,13 @@ by their controllers, with access tokens the site issues itself:
 | `POST /lws/oauth/token` | Token exchange (RFC 8693): a self-signed credential for an access token to a storage |
 | `GET /lws/oauth/jwks` | The keys that sign access tokens |
 | No token, or a rejected one | `401` with a Bearer challenge: `as_uri` (the authorization server), `realm` (the storage) and, for a rejected token, `error` |
-| A valid token of anyone else | `403` |
+| A valid token, but no policy allows it | `403`, or `404` with `lws.settings:conceal_existence` |
 | Over the storage's quota | `507` |
 
 Successful responses carry `ETag` and `Link` headers (storage, type, parent,
 linkset), and errors are RFC 9457 problem details. Content is kept as managed
 files in the private file system and never served through Drupal's own file
-routes. Access for agents other than controllers comes with step A3.
+routes.
 
 ```sh
 drush lws:storage:create alice --controller=https://id.example/alice --quota=1000000000 --page-size=50
@@ -49,6 +50,38 @@ drush lws:as:add main https://as.example --default    # or trust another authori
 drush lws:storage:list
 drush lws:storage:delete alice
 drush lws:gc                                           # sweep unreferenced content
+```
+
+## Sharing
+
+A storage's controllers may do anything in it. Anyone else may do what its
+access policies allow. A policy is an `AccessPolicy` of the access profile (LWS
+Core §11.3):
+
+- **who:** an agent, everyone (`http://xmlns.com/foaf/0.1/Agent`, with or
+  without a token) or every authenticated agent
+  (`http://www.w3.org/ns/auth/acl#AuthenticatedAgent`);
+- **may:** `read`, `create`, `modify`, `delete`;
+- **in:** resources, where a container includes everything in it at any depth,
+  limited to containers, data resources or both;
+- **if:** constraints on the `client`, the `format`, the `type` and the
+  `dateTime`, which must all hold. What cannot be evaluated does not hold: a
+  container has no format, a resource that does not exist has no format or
+  types, and no request states a `purpose`.
+
+Listings show each agent only the members it may read. Removing a policy takes
+effect on the next request.
+
+Policies are managed at `/admin/content/lws/{storage id}/access` by storage
+administrators and by a storage's owner with *Manage own LWS storages*, or with
+Drush:
+
+```sh
+drush lws:policy:add alice public --target=https://storage.example/lws/alice/root/public/
+drush lws:policy:add alice https://id.example/bob --action=read --action=create --until=2026-12-31T23:59:59Z
+drush lws:policy:add alice --json=policy.json          # an AccessPolicy object
+drush lws:policy:list alice
+drush lws:policy:delete alice 3
 ```
 
 ## Access tokens

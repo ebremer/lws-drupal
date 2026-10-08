@@ -8,3 +8,6 @@ lws.settings:
     prefix:
       type: string
       label: 'Path prefix of the LWS URL space, starting with a slash and with no trailing slash.'
+    conceal_existence:
+      type: boolean
+      label: 'Whether an agent refused access answers 404, not 403, so that it cannot tell whether a resource exists.'

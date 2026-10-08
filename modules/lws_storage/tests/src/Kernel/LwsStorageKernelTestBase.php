@@ -82,6 +82,7 @@ abstract class LwsStorageKernelTestBase extends KernelTestBase {
     $this->installSchema('file', ['file_usage']);
     $this->installEntitySchema('lws_storage');
     $this->installEntitySchema('lws_resource');
+    $this->installEntitySchema('lws_policy');
     $this->installEntitySchema('date_format');
     $this->installConfig(['system', 'file', 'lws', 'lws_authz', 'lws_storage']);
     $this->config('lws.settings')->set('base_url', self::BASE)->save();

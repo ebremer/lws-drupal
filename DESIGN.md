@@ -1439,6 +1439,60 @@ with no adapters.
   fail-closed. Functional tests show alice, bob and anonymous seeing different listings of the
   same container.
 
+**Done.** Differences from the plan above:
+
+- **Built as planned:**
+  - the `lws_policy` content entity: actions, assignee, target type and values, constraints,
+    `not_after`, source and owner;
+  - `PolicyEvaluator`:
+    - targets cover their resources and everything below a container, the storage URI included;
+      a container may be named without its trailing slash;
+    - assignees are the agent, `foaf:Agent`, and for an authenticated agent
+      `acl:AuthenticatedAgent`;
+    - the constraints and operators of the table in [§6.5](#65-policy-model-and-the-pdp) fail
+      closed, and `purpose` never holds (D7);
+  - `forAgent()` loads the agent's read policies once. A listing is a plain query when a
+    `StorageResource` policy without format or type constraints covers the container, and is
+    checked member by member otherwise; `totalItems` counts what the agent sees;
+  - the access page at `/admin/content/lws/{storage}/access`: the controllers, the policies with
+    a Remove operation, and the Share form. It is open to storage administrators, and to a
+    storage's owner with the new `manage own lws storages` permission;
+  - `create` is judged on the target container, and format and type on the new resource, from
+    `Content-Type` and `Link`.
+- **Built differently:**
+  - a policy's storage is the storage entity's ID, not a reference, since `lws_authz` does not
+    depend on `lws_storage`. A deleted storage's policies are deleted with it (`hook_entity_delete`),
+    and cron deletes expired policies made by administrators;
+  - `AccessPolicyParser` reads the JSON form strictly. It makes target URIs canonical, and they must
+    be the storage or resources in it. The Share form and Drush use it, as access grants will (A4);
+  - the resource context carries the format and types of an existing resource, and a
+    `ResourceChange` for writes. A modification must satisfy format and type constraints before
+    and after: a `PUT`'s `Content-Type`, and the types `Prefer: set-linkset` sets. A linkset write
+    never satisfies a type constraint, as its outcome is unknown until it is made;
+  - a resource that does not exist has no format or types, so a policy limited by them refuses it
+    (`403`, not `404`). Negative operators therefore cannot reveal what exists;
+  - `lws.settings:conceal_existence` ([§12](#12-spec-interpretation-decisions) #15) turns refusals
+    of valid tokens into `404`; it is off by default;
+  - `lws:policy:add`, `lws:policy:list` and `lws:policy:delete`, and an update hook that installs
+    the entity type on existing sites.
+- **Left out:** role assignees and the `bypass lws access policy` permission (U1), pending access
+  requests on the access page (A4), and a purpose source (D7). The storage list at
+  `/admin/content/lws` is S5's, so for now the access page is reached by its URL.
+- **`lws-server` differs:** it supports only `eq`, `isAnyOf`, `gteq` and `lteq`; this design's
+  `neq`, `isNoneOf`, `isAllOf`, `lt`, `gt` and `eq` on `dateTime` are extensions in practice.
+- **Exit criteria:**
+  - the unit matrix of actions × target types × places, and of operands × operators, 78
+    cases, all failing closed where they cannot be evaluated;
+  - one container, four listings: alice (controller) sees `a.txt`, `b.png`, `d.html` and `sub/`.
+    Bob, allowed text and the containers, sees `a.txt`, `b.png` (through the public's policy) and
+    `sub/`. The public, allowed photos and the containers, sees `b.png` and `sub/`, as does carol,
+    who has no policy.
+- **Verified:** 438 tests; phpcs and phpstan (level 8) are clean. The PHP client's
+  `quickstart.php`, with only its autoload path changed, runs end to end with a random `did:key`
+  agent on a storage shared with every authenticated agent, which removes A2's workaround. Share
+  and Remove work through Apache. Touchstone is unchanged (`core` 86 passed, `auth/cid` 22/22);
+  its `access_grants` area waits for A4.
+
 **A4. Access request and access grant services.**
 
 - **Scope:**

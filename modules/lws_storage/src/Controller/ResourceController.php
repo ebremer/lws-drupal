@@ -19,6 +19,7 @@ use Drupal\lws_storage\Entity\LwsResourceInterface;
 use Drupal\lws_storage\Entity\LwsStorageInterface;
 use Drupal\lws_storage\Http\ContentResponse;
 use Drupal\lws_storage\Http\JsonPatches;
+use Drupal\lws_storage\Http\WriteRequests;
 use Drupal\lws_storage\Linkset\Linksets;
 use Drupal\lws_storage\Listing\ContainerPager;
 use Drupal\lws_storage\ResourceLinks;
@@ -30,7 +31,6 @@ use Ebremer\Lws\Json\JsonPatchException;
 use Ebremer\Lws\LinkRelation;
 use Ebremer\Lws\MediaType;
 use Ebremer\Lws\Prefer;
-use Ebremer\Lws\ResourceType;
 use Ebremer\Lws\Vocabulary;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\DependencyInjection\Attribute\Autowire;
@@ -90,13 +90,8 @@ final class ResourceController implements ContainerInjectionInterface {
    */
   public function post(LwsStorageInterface $lws_storage, LwsTarget $lws_target, Request $request): Response {
     $parent = $this->resources->findByTarget($lws_storage, $lws_target) ?? throw LwsHttpException::notFound();
-    $links = self::requestLinks($request);
-    $container = FALSE;
-    foreach ($links as $link) {
-      if ($link->rel === LinkRelation::TYPE && $link->href === ResourceType::CONTAINER && !isset($link->params['anchor'])) {
-        $container = TRUE;
-      }
-    }
+    $links = WriteRequests::links($request);
+    $container = WriteRequests::createsContainer($links);
     $mediaType = $container ? '' : $this->mediaType($request) ?? 'application/octet-stream';
     $resource = $this->manager->createResource(
       $parent,
@@ -122,13 +117,13 @@ final class ResourceController implements ContainerInjectionInterface {
   public function put(LwsStorageInterface $lws_storage, LwsTarget $lws_target, Request $request): Response {
     $resource = $this->resources->findByTarget($lws_storage, $lws_target) ?? throw LwsHttpException::notFound();
     $this->requireIfMatch($request);
-    $setLinkset = self::prefersSetLinkset($request);
+    $setLinkset = WriteRequests::prefersSetLinkset($request);
     $updated = $this->manager->replaceContent(
       $resource,
       $this->body($request),
       $this->mediaType($request),
       fn (LwsResourceInterface $current) => $this->checkPreconditions($request, $current),
-      $setLinkset ? $this->linksets->fromLinkHeaders(self::requestLinks($request)) : NULL,
+      $setLinkset ? $this->linksets->fromLinkHeaders(WriteRequests::links($request)) : NULL,
     );
     $this->log('Replaced', $lws_storage, $updated, $request);
     return LwsResponse::empty(Response::HTTP_NO_CONTENT, [], $updated->getEtag(), $setLinkset ? ['Preference-Applied' => Prefer::SET_LINKSET] : []);
@@ -147,7 +142,7 @@ final class ResourceController implements ContainerInjectionInterface {
     }
     $patch = JsonPatches::fromRequest($request);
     $this->requireIfMatch($request);
-    $setLinkset = self::prefersSetLinkset($request);
+    $setLinkset = WriteRequests::prefersSetLinkset($request);
     $updated = $this->manager->changeContent(
       $resource,
       static function (string $content) use ($patch): string {
@@ -168,7 +163,7 @@ final class ResourceController implements ContainerInjectionInterface {
         }
       },
       fn (LwsResourceInterface $current) => $this->checkPreconditions($request, $current),
-      $setLinkset ? $this->linksets->fromLinkHeaders(self::requestLinks($request)) : NULL,
+      $setLinkset ? $this->linksets->fromLinkHeaders(WriteRequests::links($request)) : NULL,
     );
     $this->log('Patched', $lws_storage, $updated, $request);
     return LwsResponse::empty(Response::HTTP_NO_CONTENT, [], $updated->getEtag(), $setLinkset ? ['Preference-Applied' => Prefer::SET_LINKSET] : []);
@@ -333,30 +328,6 @@ final class ResourceController implements ContainerInjectionInterface {
     if (Preconditions::evaluate($request, $current->getEtag(), $current->getChangedTime()) !== NULL) {
       throw LwsHttpException::preconditionFailed();
     }
-  }
-
-  /**
-   * The Link headers of a request.
-   *
-   * @return list<\Ebremer\Lws\Http\Link>
-   *   The links.
-   */
-  private static function requestLinks(Request $request): array {
-    return LinkHeader::parse(array_filter($request->headers->all('link'), 'is_string'));
-  }
-
-  /**
-   * Whether a request asks for its Link headers to update the linkset too.
-   */
-  private static function prefersSetLinkset(Request $request): bool {
-    foreach ($request->headers->all('prefer') as $value) {
-      foreach (preg_split('/\s*[,;]\s*/', strtolower((string) $value)) ?: [] as $preference) {
-        if ($preference === Prefer::SET_LINKSET) {
-          return TRUE;
-        }
-      }
-    }
-    return FALSE;
   }
 
   /**

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Drupal\lws\EventSubscriber;
 
+use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\ParamConverter\ParamNotConvertedException;
 use Drupal\Core\Utility\Error;
 use Drupal\lws\Agent\Authentication;
@@ -26,7 +27,8 @@ use Symfony\Component\HttpKernel\KernelEvents;
  *
  * A refusal of a request without a valid token becomes a 401 with a Bearer
  * challenge naming the storage as the realm and its authorization server as
- * "as_uri" (LWS Core §5.2.1). A refusal of a valid token stays a 403.
+ * "as_uri" (LWS Core §5.2.1). A refusal of a valid token stays a 403, or
+ * becomes a 404 when lws.settings:conceal_existence is set (§9.5).
  */
 final class LwsExceptionSubscriber implements EventSubscriberInterface {
 
@@ -34,6 +36,7 @@ final class LwsExceptionSubscriber implements EventSubscriberInterface {
     private readonly LwsUrlParser $parser,
     private readonly LwsUrlGenerator $urls,
     private readonly LoggerInterface $logger,
+    private readonly ConfigFactoryInterface $configFactory,
   ) {}
 
   /**
@@ -94,6 +97,12 @@ final class LwsExceptionSubscriber implements EventSubscriberInterface {
         ]);
         $headers['Link'] = LinkHeader::format($authentication->realm, LinkRelation::STORAGE);
       }
+    }
+    elseif ($status === 403 && $authentication->isAuthenticated() && $this->configFactory->get('lws.settings')->get('conceal_existence')) {
+      // Then a refusal reads as the answer for a resource that does not
+      // exist, whether the resource exists or not.
+      $status = 404;
+      $detail = NULL;
     }
     $event->setResponse(ProblemResponse::create($status, $detail, $this->urls->targetUri($target), $headers));
   }

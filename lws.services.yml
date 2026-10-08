@@ -70,7 +70,7 @@ services:
 
   lws.exception_subscriber:
     class: Drupal\lws\EventSubscriber\LwsExceptionSubscriber
-    arguments: ['@lws.url_parser', '@lws.url_generator', '@logger.channel.lws']
+    arguments: ['@lws.url_parser', '@lws.url_generator', '@logger.channel.lws', '@config.factory']
     tags:
       - { name: event_subscriber }
 

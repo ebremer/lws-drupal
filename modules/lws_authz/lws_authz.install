@@ -1,0 +1,21 @@
+<?php
+
+/**
+ * @file
+ * Install and update functions for LWS Authorization.
+ */
+
+declare(strict_types=1);
+
+/**
+ * Adds the access policy entity type (step A3).
+ */
+function lws_authz_update_11001(): string {
+  $updates = \Drupal::entityDefinitionUpdateManager();
+  if ($updates->getEntityType('lws_policy') !== NULL) {
+    return 'Access policies were already installed.';
+  }
+  $type = \Drupal::entityTypeManager()->getDefinition('lws_policy');
+  $updates->installEntityType($type);
+  return 'Installed access policies.';
+}
