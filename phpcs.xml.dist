@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ruleset name="lws">
+  <description>Drupal coding standards for the LWS modules.</description>
+
+  <file>.</file>
+  <arg name="extensions" value="php,module,inc,install,test,profile,theme,info,yml"/>
+  <arg name="cache" value=".phpcs-cache"/>
+  <arg name="colors"/>
+
+  <!-- The Drupal codebase that ddev-drupal-contrib builds around the module.
+       Relative, because the module itself can live under a web/ directory. -->
+  <exclude-pattern type="relative">^(\.ddev|vendor|web)/</exclude-pattern>
+
+  <rule ref="Drupal"/>
+  <rule ref="DrupalPractice"/>
+</ruleset>

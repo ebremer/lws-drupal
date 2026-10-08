@@ -1,0 +1,60 @@
+# The LWS URL space (DESIGN.md §4.2). LwsPathProcessor maps every URL under the
+# configured prefix onto one of these internal paths, and LwsRouteEnhancer
+# parses the original URL into the controller's $lws_target argument. Requested
+# directly, the internal paths answer 404. OPTIONS requests and malformed paths
+# never reach these routes: LwsRequestSubscriber answers them before core does.
+
+lws.description:
+  path: '/_lws/description'
+  defaults:
+    _controller: '\Drupal\lws\Controller\UrlSpaceController::description'
+  methods: [GET, HEAD]
+  requirements:
+    # Every request may reach the URL space; the LWS access policy decides
+    # per resource (DESIGN.md §5.4), not the route.
+    _access: 'TRUE'
+  options:
+    _lws: TRUE
+    _auth: ['lws_bearer']
+    no_cache: TRUE
+
+lws.resource:
+  path: '/_lws/resource'
+  defaults:
+    _controller: '\Drupal\lws\Controller\UrlSpaceController::resource'
+  methods: [GET, HEAD]
+  requirements:
+    # Every request may reach the URL space; the LWS access policy decides
+    # per resource (DESIGN.md §5.4), not the route.
+    _access: 'TRUE'
+  options:
+    _lws: TRUE
+    _auth: ['lws_bearer']
+    no_cache: TRUE
+
+lws.meta:
+  path: '/_lws/meta'
+  defaults:
+    _controller: '\Drupal\lws\Controller\UrlSpaceController::meta'
+  methods: [GET, HEAD]
+  requirements:
+    # Every request may reach the URL space; the LWS access policy decides
+    # per resource (DESIGN.md §5.4), not the route.
+    _access: 'TRUE'
+  options:
+    _lws: TRUE
+    _auth: ['lws_bearer']
+    no_cache: TRUE
+
+lws.unknown:
+  path: '/_lws/unknown'
+  defaults:
+    _controller: '\Drupal\lws\Controller\UrlSpaceController::unknown'
+  requirements:
+    # Every request may reach the URL space; the LWS access policy decides
+    # per resource (DESIGN.md §5.4), not the route.
+    _access: 'TRUE'
+  options:
+    _lws: TRUE
+    _auth: ['lws_bearer']
+    no_cache: TRUE

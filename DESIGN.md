@@ -249,28 +249,47 @@ segments and matches *pattern outlines*. It also right-trims `/` from the path b
 processors see it, and again before matching. LWS needs arbitrary depth, and it needs the trailing
 slash, because `…/notes` and `…/notes/` are different resources.
 
-`Drupal\lws\Routing\LwsPathProcessor` is an `InboundPathProcessorInterface`. It works like core's
-`PathProcessorFiles` for `/system/files/…`, except that it uses a request attribute rather than the
-query string. It:
+The skeleton (Step 0) implements this. Five pieces work together, all driven by one parser,
+`LwsUrlParser`. It reads the **raw** path from `$request->getPathInfo()`, which is not URL-decoded,
+keeps its case and keeps its trailing slash. It returns an `LwsTarget`: the storage slug, the area
+(`description`, `resource`, `meta`, `unknown` or `malformed`) and the decoded segment names.
 
-1. reads the **raw** path from `$request->getPathInfo()`, not from the `$path` argument (core has
-   already trimmed that). The raw path is not URL-decoded, keeps its case and keeps its trailing
-   slash;
-2. parses it into an `LwsTarget`: the storage slug, the area (`description`, `resource`, `meta`,
-   or a service registered under the `lws.storage_service` tag), and the remaining path;
-3. stores the `LwsTarget` in the request attribute `_lws_target`;
-4. returns a fixed internal path such as `/lws/{s}/_resource`.
+1. **`LwsPathProcessor`**, an inbound path processor at priority 1100, runs above core's
+   `path_processor_decode` (1000), so its `$path` argument still matches the raw path. It works
+   like core's `PathProcessorFiles` for `/system/files/…`, mapping every URL under the prefix to a
+   fixed internal path per area: `/_lws/description`, `/_lws/resource`, `/_lws/meta`,
+   `/_lws/unknown`. It does **not** pass the target along on the request. The router caches the
+   processed path per URL and skips path processors on a cache hit, so anything a processor
+   stores on the request is gone from the second request on.
+2. **`LwsRouteEnhancer`** parses the URL again after routing; enhancers run on every request. It
+   hands the controller an `$lws_target` argument. When an internal path is requested directly, the
+   URL doesn't parse to that route's area, and the answer is `404`.
+3. **`LwsRequestSubscriber`** (`kernel.request`, priority 1010) answers two kinds of request before
+   core does:
+   - **Malformed paths get `400`.** Core's `RedirectLeadingSlashesSubscriber` (priority 1000)
+     redirects any path containing `//` to the path with the slashes collapsed. In LWS that is a
+     different resource.
+   - **`OPTIONS` gets `204` with the target's `Allow`, unauthenticated.** Core's
+     `OptionsRequestSubscriber` (priority 1000) answers *every* `OPTIONS` request itself with the
+     union of the methods of all routes on the path. Declaring an `OPTIONS` route does not stop it.
+4. **`LwsExceptionSubscriber`** (`kernel.exception`, priority 250) renders every error under the
+   prefix as RFC 9457 problem details. It runs ahead of core's `Fast404ExceptionHtmlSubscriber`
+   (priority 200), which would otherwise answer a `404` for a name such as `notes.txt` with an HTML
+   page. It also runs ahead of the exception logger (50), so `4xx` protocol traffic is not logged
+   as site errors; `5xx` is logged to the `lws` channel.
+5. **`DisallowLwsRequests`**, a page-cache request policy, keeps everything under the prefix, and
+   any request carrying `Authorization: Bearer` or `DPoP`, out of the page cache.
 
-Fixed internal routes then match on method. For resources these are `.read` (GET|HEAD), `.create`
-(POST), `.update` (PUT|PATCH), `.delete` (DELETE) and `.options` (OPTIONS). Every LWS route
-carries:
+Internal routes match on method. Every LWS route carries:
 
 - `_auth: ['lws_bearer']`. Cookie authentication is never used on LWS routes; see
   [§8.4](#84-security);
 - `no_cache: TRUE`;
-- `_lws_access: 'TRUE'`, the access check in [§5.4](#54-request-pipeline);
-- an explicit `OPTIONS` route, so that core's `OptionsRequestSubscriber` does not answer `OPTIONS`
-  with the union of every method on the shared path.
+- `_access: 'TRUE'` for now. Step A1 replaces it with `_lws_access`, the access check in
+  [§5.4](#54-request-pipeline).
+
+Checked against Drupal 11.4.8 by kernel tests, and by curl through Apache with the page cache
+enabled.
 
 Outbound, `LwsUrlGenerator` builds absolute canonical URIs from entities. LWS code never uses
 `Url::fromRoute()` for protocol URIs.
@@ -334,7 +353,7 @@ Every write is one database transaction. The table maps each operation to its HT
 | **Read data resource** `GET/HEAD` | The stored bytes with the stored `Content-Type`. Headers: `ETag` (strong), `Last-Modified`, `Accept-Ranges: bytes`, single-range `206`/`416` (§9.3, RFC 7233), `Allow`, `Accept-Patch` (JSON resources), and `Link` for `linkset` (`type="application/linkset+json"`), `up`, `type` (`lws#DataResource` plus user types) and `lws#storage` (§9.1, §9.3). Served with Symfony `BinaryFileResponse` for local stream wrappers, and a ranged `StreamedResponse` otherwise |
 | **Read container** `GET/HEAD` | Container representation (§8.1) with items `{id, type, format, size, modified}`; `format` is always present on data resources. `application/lws+json`, `application/ld+json` and `application/json` are equivalent: `Content-Type` echoes the request and `Vary: Accept` is sent (§12.1.1). Anything else is `406`. Paginated: see [§5.6](#56-container-listings-and-pagination) |
 | **Conditional read** | `If-None-Match` / `If-Modified-Since` → `304`; `If-Range` (§9.3; RFC 9110 §13) |
-| **Create** `POST` to a container | Creates a container when `Link: <https://www.w3.org/ns/lws#Container>; rel="type"` is present (body ignored), otherwise a data resource from the body and `Content-Type`. The name comes from the `Slug` hint, sanitised to `[A-Za-z0-9._~-]` and made unique (`a.txt` → `a-1.txt`), or else from a generated id. Other `Link` headers become user-managed metadata (`rel="type"` → `types`); server-managed relations in them are ignored (§9.2). Response: `201`, absolute `Location`, `Link` for `up`, `linkset` and `type`, and `ETag`. Missing target → `404`; target is not a container → `405`. Quota → `507`; rejected by a Drupal file validator → `422` |
+| **Create** `POST` to a container | Creates a container when `Link: <https://www.w3.org/ns/lws#Container>; rel="type"` is present (body ignored), otherwise a data resource from the body and `Content-Type`. The name comes from the `Slug` hint, sanitised to `[A-Za-z0-9._~-]` and made unique (`a.txt` → `a-1.txt`), or else from a generated id. A name never starts with `.`: Drupal's `.htaccess` refuses such path segments with `403`. Other `Link` headers become user-managed metadata (`rel="type"` → `types`); server-managed relations in them are ignored (§9.2). Response: `201`, absolute `Location`, `Link` for `up`, `linkset` and `type`, and `ETag`. Missing target → `404`; target is not a container → `405`. Quota → `507`; rejected by a Drupal file validator → `422` |
 | **Replace** `PUT` | Data resources only. Replaces bytes and media type. Missing resource → `404` (§9.4: there is no PUT-to-create); container → `405`. `204` on success. With `Prefer: set-linkset` and `Link` headers, also replaces the user-managed links atomically and answers `Preference-Applied: set-linkset` |
 | **Patch** `PATCH` | `application/json-patch+json` (RFC 6902) on JSON resources (`application/json` and `*/*+json`). Optional `application/merge-patch+json`. Non-JSON resource or other patch format → `415` with `Accept-Patch`. Malformed patch → `400`; failed `test` or missing path → `409`; result not valid JSON for the media type → `422`. `Prefer: set-linkset` works as for `PUT` |
 | **Delete** `DELETE` | `204`. Removes the resource, its linkset and its parent's membership atomically (§9.5). A non-empty container without `Depth: infinity` → `409`; any other `Depth` value → `400`. Recursive delete is allowed only if the agent may delete *every* descendant, otherwise `403` and nothing is removed. The root cannot be deleted (`405`) |
@@ -423,9 +442,12 @@ LWS clients always read content through its LWS URL.
    an `LwsAccount` (an `AccountInterface` that carries the `RequestingAgent`), and puts a
    `TokenValidationResult` in the request attribute `_lws_auth`. A failed validation is acted on
    after routing, when the realm is known.
-3. **Path processing.** `LwsPathProcessor` builds the `_lws_target` attribute ([§4.2](#42-routing-variable-depth-paths-in-drupal)).
-4. **Routing and parameter conversion.** The `lws_target` converter loads the storage and the
-   target resource. For `POST` the target must be a container.
+3. **Path processing.** `LwsPathProcessor` maps the URL to an internal route path, and
+   `LwsRouteEnhancer` gives the controller `$lws_target`
+   ([§4.2](#42-routing-variable-depth-paths-in-drupal)). Malformed paths and `OPTIONS` were already
+   answered by `LwsRequestSubscriber`.
+4. **Parameter conversion.** A converter loads the storage and the target resource for
+   `$lws_target`. For `POST` the target must be a container.
 5. **Access** (`_lws_access`).
    1. A token that was present but invalid → `401` with `error="invalid_token"`, even on public
       resources (§5.2.4.2).
@@ -946,6 +968,11 @@ Core's site-wide `cors.config` can stay off.
   them.
 - **HTTP caches.** A public resource gets `Cache-Control: public, no-cache` with validators.
   Everything else gets `private`. `Vary: Accept, Authorization, Origin` where relevant.
+- **Every LWS response sets `Cache-Control` explicitly.** For a plain response whose
+  `Cache-Control` is Symfony's default (`no-cache, private`), core's `FinishResponseSubscriber`
+  removes `ETag`, `Last-Modified` and `Vary`, and LWS requires ETags. Symfony sorts directives, so
+  `private, no-cache` counts as the default too; the skeleton uses
+  `private, no-cache, max-age=0`.
 - **Internal caches.** JWKS, AS metadata, CID documents and OIDC discovery are cached in the
   `cache.lws` bin.
 
@@ -1032,6 +1059,26 @@ merge with passing tests; the build order is at the end of this section.
   - the adapters over `ebremer/lws-client`.
 - **Exit:** unit tests for the path parser (trailing slashes, percent-encoding, case),
   preconditions (the RFC 9110 matrix), cursors and the SSRF guard (DNS-rebinding cases).
+
+**Done in the walking skeleton:**
+
+- `composer.json` and the info file; the `lws.settings` schema (base URL and prefix), but no
+  settings form yet;
+- phpcs (Drupal and DrupalPractice), phpstan level 8, and a DDEV config for `ddev-drupal-contrib`;
+- CI on GitHub Actions: PHP 8.3 and 8.4, latest Drupal 11, SQLite;
+- the URL space ([§4.2](#42-routing-variable-depth-paths-in-drupal)): `LwsUrlParser`,
+  `LwsPathProcessor`, `LwsRouteEnhancer`, `LwsRequestSubscriber`, `LwsExceptionSubscriber`;
+- `LwsUrlGenerator`, `ProblemResponse`, `LwsResponse`, `LinkHeader`;
+- the page-cache request policy;
+- placeholder responses (`UrlSpaceController`), which S1 replaces.
+
+**Still to do in Step 0:**
+
+- the settings form and `hook_requirements()`;
+- the seams, `Preconditions` and `PaginationCursor`;
+- the SSRF guard and the CORS subscriber;
+- the `lws-client` adapters, which wait on Q4;
+- the MySQL and PostgreSQL CI matrix.
 
 ### Storage module steps
 

@@ -1,0 +1,24 @@
+{
+    "name": "ebremer/lws-drupal",
+    "description": "W3C Linked Web Storage (LWS) 1.0 server for Drupal 11.",
+    "type": "drupal-module",
+    "license": "GPL-2.0-or-later",
+    "keywords": ["drupal", "linked web storage", "lws", "w3c"],
+    "homepage": "https://github.com/ebremer/lws-drupal",
+    "authors": [
+        {
+            "name": "Erich Bremer"
+        }
+    ],
+    "support": {
+        "issues": "https://github.com/ebremer/lws-drupal/issues",
+        "source": "https://github.com/ebremer/lws-drupal"
+    },
+    "require": {
+        "php": ">=8.3",
+        "drupal/core": "^11.1"
+    },
+    "extra": {
+        "installer-name": "lws"
+    }
+}

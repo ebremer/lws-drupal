@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: PHP ${{ matrix.php }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.3', '8.4']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: lws
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: gd, pdo_sqlite, sqlite3
+          coverage: none
+          tools: composer:v2
+
+      - name: Build a Drupal 11 site around the module
+        run: sh lws/.github/build-site.sh drupal lws
+
+      - name: Coding standards
+        working-directory: drupal
+        run: vendor/bin/phpcs --standard=web/modules/contrib/lws/phpcs.xml.dist web/modules/contrib/lws
+
+      - name: Static analysis
+        working-directory: drupal
+        run: vendor/bin/phpstan analyse -c web/modules/contrib/lws/phpstan.neon.dist --no-progress --memory-limit=1G
+
+      - name: Unit and kernel tests
+        working-directory: drupal
+        env:
+          SIMPLETEST_DB: sqlite://localhost//tmp/lws-test.sqlite
+          SIMPLETEST_BASE_URL: http://localhost
+        run: vendor/bin/phpunit -c web/core web/modules/contrib/lws/tests

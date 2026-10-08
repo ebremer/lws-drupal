@@ -1,0 +1,10 @@
+# Run from the Drupal project root, so that mglaman/phpstan-drupal finds core:
+#   vendor/bin/phpstan analyse -c <path-to-module>/phpstan.neon.dist
+parameters:
+  level: 8
+  paths:
+    - .
+  excludePaths:
+    - .ddev (?)
+    - vendor (?)
+    - web (?)

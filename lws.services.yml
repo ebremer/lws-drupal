@@ -1,0 +1,47 @@
+services:
+  logger.channel.lws:
+    parent: logger.channel_base
+    arguments: ['lws']
+
+  lws.url_parser:
+    class: Drupal\lws\Routing\LwsUrlParser
+    arguments: ['@config.factory']
+  Drupal\lws\Routing\LwsUrlParser: '@lws.url_parser'
+
+  lws.url_generator:
+    class: Drupal\lws\Routing\LwsUrlGenerator
+    arguments: ['@lws.url_parser', '@config.factory', '@request_stack']
+  Drupal\lws\Routing\LwsUrlGenerator: '@lws.url_generator'
+
+  lws.path_processor:
+    class: Drupal\lws\Routing\LwsPathProcessor
+    arguments: ['@lws.url_parser']
+    tags:
+      # Above path_processor_decode (1000), so that the path still matches the
+      # request's raw, percent-encoded path.
+      - { name: path_processor_inbound, priority: 1100 }
+
+  lws.route_enhancer:
+    class: Drupal\lws\Routing\LwsRouteEnhancer
+    arguments: ['@lws.url_parser']
+    tags:
+      - { name: route_enhancer }
+
+  lws.request_subscriber:
+    class: Drupal\lws\EventSubscriber\LwsRequestSubscriber
+    arguments: ['@lws.url_parser']
+    tags:
+      - { name: event_subscriber }
+
+  lws.exception_subscriber:
+    class: Drupal\lws\EventSubscriber\LwsExceptionSubscriber
+    arguments: ['@lws.url_parser', '@lws.url_generator', '@logger.channel.lws']
+    tags:
+      - { name: event_subscriber }
+
+  lws.page_cache_request_policy.disallow_lws_requests:
+    class: Drupal\lws\PageCache\DisallowLwsRequests
+    arguments: ['@lws.url_parser']
+    public: false
+    tags:
+      - { name: page_cache_request_policy }

@@ -1,0 +1,12 @@
+# Drupal codebase built around the module by ddev-drupal-contrib (`ddev poser`).
+/vendor/
+/web/
+/recipes/
+/composer.lock
+/composer.contrib.json
+/composer.contrib.lock
+
+# Test and analysis caches.
+/.phpunit.cache/
+.phpunit.result.cache
+/.phpcs-cache

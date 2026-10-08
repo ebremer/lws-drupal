@@ -1,0 +1,14 @@
+# DDEV development site for the module. The ddev-drupal-contrib add-on builds a
+# Drupal codebase (web/, vendor/) around this checkout and symlinks the module
+# into web/modules/custom/lws. See README.md for the first-time setup.
+name: lws-drupal
+type: drupal
+docroot: web
+php_version: "8.3"
+# Apache, so that Drupal's .htaccess applies as it does on most hosts.
+webserver_type: apache-fpm
+database:
+  type: mariadb
+  version: "10.11"
+web_environment:
+  - DRUPAL_CORE=^11
