@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Drupal\lws_storage;
 
 use Drupal\lws\Routing\LwsUrlGenerator;
+use Drupal\lws\Storage\StorageKeysInterface;
 use Drupal\lws\Storage\StorageServiceInterface;
 use Drupal\lws_storage\Entity\LwsStorageInterface;
 use Drupal\lws_storage\Http\JsonPatches;
@@ -16,7 +17,7 @@ use Ebremer\Lws\Vocabulary;
  * Builds storage descriptions (LWS Core §6.1).
  *
  * The service set comes from services tagged "lws.storage_service", in order
- * of priority.
+ * of priority, and so do the keys of those that publish keys.
  */
 final class StorageDescriptionBuilder {
 
@@ -47,13 +48,22 @@ final class StorageDescriptionBuilder {
   public function build(LwsStorageInterface $storage): array {
     $uri = $this->urls->storageUri($storage->getSlug());
     $services = [];
+    $methods = [];
     foreach ($this->services as $service) {
       array_push($services, ...$service->services($uri, $storage->getSlug()));
+      if ($service instanceof StorageKeysInterface) {
+        array_push($methods, ...$service->verificationMethods($uri, $storage->getSlug()));
+      }
     }
+    $keys = $methods === [] ? [] : [
+      'verificationMethod' => $methods,
+      'authentication' => array_map(static fn (array $method): mixed => $method['id'], $methods),
+    ];
     return [
       '@context' => [Vocabulary::CID_CONTEXT, Vocabulary::LWS_CONTEXT],
       'id' => $uri,
       'type' => ResourceType::STORAGE,
+    ] + $keys + [
       // The patch formats JSON resources and linksets take. The IRI is the
       // one lws-server uses; the vocabulary has none yet (DESIGN.md D3), and
       // Accept-Patch is what clients rely on.

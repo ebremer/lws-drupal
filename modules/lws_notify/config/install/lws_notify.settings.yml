@@ -1,0 +1,27 @@
+# Whether activities name the agent who made the change. Off by default: the
+# core asks that the actor be omitted unless needed (Privacy §17.2).
+include_actor: false
+limits:
+  # The subscriptions one agent may hold at one storage.
+  subscriptions_per_agent: 20
+  # The topics of one subscription.
+  topics: 32
+  # The longest a subscription lasts, in seconds; 0 for no limit. A
+  # subscription that asks for no expiry gets this one.
+  lifetime: 2592000
+delivery:
+  # Deliver at the end of the request that made the change. Otherwise every
+  # delivery waits for cron.
+  inline: true
+  # The most seconds spent delivering at the end of one request; what is left
+  # waits for cron.
+  inline_budget: 10
+  # The connect and total timeout of one delivery, in seconds.
+  timeout: 5
+  # The seconds to wait before each retry of a delivery the inbox could not
+  # take (5xx, 429 or no answer). A first retry of at most 5 seconds is made
+  # at the end of the request; later ones by cron.
+  retry_delays: [2, 60, 600, 3600, 21600]
+  # The deliveries in a row that may fail before a subscription is
+  # deactivated. An inbox that answers 410 Gone deactivates it at once.
+  max_failures: 5

@@ -43,6 +43,16 @@ final class LwsHttpException extends HttpException {
   }
 
   /**
+   * Creates a 429 Too Many Requests error for a limit an agent has reached.
+   *
+   * Unlike a rate limit, waiting does not help: the agent must give up
+   * something first, such as one of its subscriptions.
+   */
+  public static function limitReached(string $detail): self {
+    return new self(429, $detail);
+  }
+
+  /**
    * Creates a 404 Not Found error.
    */
   public static function notFound(string $detail = ''): self {

@@ -1,0 +1,11 @@
+lws_notify.storage_subscriptions:
+  title: 'Subscriptions'
+  route_name: lws_notify.storage_subscriptions
+  base_route: entity.lws_storage.edit_form
+  weight: 15
+
+lws_notify.settings:
+  title: 'Notifications'
+  route_name: lws_notify.settings
+  base_route: lws.settings
+  weight: 20

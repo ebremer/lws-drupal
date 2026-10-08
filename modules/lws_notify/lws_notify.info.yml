@@ -1,0 +1,10 @@
+name: 'LWS Notifications'
+type: module
+description: 'Notifies subscribers of changes to W3C Linked Web Storage (LWS) storages: the notification service, with signed webhook deliveries.'
+package: 'Linked Web Storage'
+core_version_requirement: ^11.3
+configure: lws_notify.settings
+dependencies:
+  - lws:lws
+  - lws:lws_authz
+  - lws:lws_storage

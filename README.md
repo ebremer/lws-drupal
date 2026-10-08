@@ -10,13 +10,14 @@ is in [DESIGN.md](DESIGN.md).
 | `lws` | The LWS URL space under `/lws`, problem details, content negotiation, CORS, the guard on outbound requests, settings |
 | `lws_authz` | Access tokens: the site's own authorization server, trusted external ones, token validation, the access decision |
 | `lws_storage` | Storages and their resources: the storage description, containers, data resources, linksets, the administration pages, Drush commands |
+| `lws_notify` | Notifications: the notification service, webhook subscriptions, and signed deliveries of changes and of access requests and grants (optional) |
 
 ## Status
 
-**Step A5, OpenID Connect** (DESIGN.md §10), after S1, storages, A1, access
+**Step S6, notifications** (DESIGN.md §10), after S1, storages, A1, access
 tokens, S2, data resources, S3, pagination, S4, metadata and JSON Patch, A2, the
-authorization server, A3, access policies, A4, access requests and grants, and
-S5, hardening and the administration pages. Storages are created at *Content ›
+authorization server, A3, access policies, A4, access requests and grants, S5,
+hardening and the administration pages, and A5, OpenID Connect. Storages are created at *Content ›
 LWS storages* or with Drush; everything in them is managed over HTTP, with
 access tokens the site issues itself, for self-signed credentials or OpenID
 Connect ID Tokens, by their controllers and by the agents their access policies
@@ -38,6 +39,9 @@ allow:
 | `POST /lws/{storage}/access/grants/` | An access grant, by a controller: its policies take effect at once |
 | `GET` either service, or an entry | The requests and grants the agent may see: all of them for a controller, else its own and the grants that name it |
 | `DELETE` an entry | Cancels a request (its agent or a controller), or revokes a grant (a controller), at once |
+| `POST /lws/{storage}/notifications/` | With `lws_notify`: a `WebhookSubscription` (`application/lws+json`) to resources the agent may read, delivered to its `inbox` ([Notifications](#notifications)) |
+| `GET` the service, or a subscription | The agent's live subscriptions, as an LWS container; a subscription's state, to its agent and the controllers |
+| `DELETE` a subscription | Cancels it (its agent or a controller) |
 | `GET /.well-known/lws-configuration` | The authorization server's metadata (RFC 8414) |
 | `POST /lws/oauth/token` | Token exchange (RFC 8693): a self-signed credential or an OpenID Connect ID Token for an access token to a storage |
 | `GET /lws/oauth/jwks` | The keys that sign access tokens |
@@ -78,8 +82,9 @@ drush lws:gc                                           # sweep unreferenced cont
 | `/admin/content/lws/add`, `/admin/content/lws/{id}` | Add or edit a storage: label, slug (fixed once made), controllers, owner, authorization server, quota (such as `10 GB`), page size, whether changes need `If-Match`, and whether it is enabled |
 | `/admin/content/lws/{id}/access` | Who may do what in it ([Sharing](#sharing)) |
 | `/admin/content/lws/{id}/resources` | A read-only resource browser, which is a View (`lws_resources`, with Views): path, kind, media type, size, creator, and *Download* and *Create media item* |
+| `/admin/content/lws/{id}/subscriptions` | With `lws_notify`: who subscribed to what, where it is delivered, and how deliveries fare; *Cancel* |
 | `/admin/content/lws/{id}/delete` | Deletes it with everything in it; a large storage is blocked first and emptied in a batch |
-| *Configuration › Web services › Linked Web Storage* | The base URL, path prefix and concealment; on the *Storages* tab, where content goes, the largest content, the largest recursive delete, the page size and whether changes need `If-Match` |
+| *Configuration › Web services › Linked Web Storage* | The base URL, path prefix and concealment; on the *Storages* tab, where content goes, the largest content, the largest recursive delete, the page size and whether changes need `If-Match`; on the *Notifications* tab, whether activities name their actor, the limits on subscriptions, and how deliveries are made and retried |
 
 *Create media item* (with Media) copies a data resource's content into a new,
 unpublished Media item of a type made from a file. The copy is the site's: later
@@ -124,6 +129,53 @@ drush lws:policy:add alice https://id.example/bob --action=read --action=create 
 drush lws:policy:add alice --json=policy.json          # an AccessPolicy object
 drush lws:policy:list alice
 drush lws:policy:delete alice 3
+```
+
+## Notifications
+
+With `lws_notify` enabled, each storage description advertises a
+`NotificationService` that offers `WebhookSubscription`s (LWS Core §10,
+[lws10-notifications-webhook](https://w3c.github.io/lws-protocol/lws10-notifications-webhook/)).
+An agent subscribes with a `POST` of its `topic`s, the resources it is about,
+and an `inbox`:
+
+```json
+{"type": "WebhookSubscription", "topic": ["https://storage.example/lws/alice/root/notes/"], "inbox": "https://app.example/inbox", "expires": "2026-12-31T23:59:59Z"}
+```
+
+- **Subscribing.** The agent must be able to read every topic (`403`
+  otherwise), with the token's client. A container covers everything in it, at
+  any depth; a data resource only itself; the storage URI stands for its root
+  container. The inbox must pass the same guard as other outbound requests
+  (`422` otherwise). A subscription lasts at most 30 days by default, an agent
+  holds at most 20 at a storage (`429`), and the answer is `201` with
+  `Location` and the subscription's `expires`.
+- **What is delivered.** Each change to a covered resource becomes an Activity
+  Streams `Create`, `Update` or `Delete`, if the subscriber may read the
+  resource when the change is made: removing someone's access stops their
+  notifications at once. The changes of one request go in one notification
+  per subscription. Who made a change is withheld unless the settings say
+  otherwise. A new or deleted access request or grant is announced to the
+  inbox it names, and a grant made by approving a request to the request's
+  inbox (LWS Core §11.6).
+- **How.** A `POST` of the `Notification` (`application/lws+json`) after the
+  response is sent, signed with HTTP Message Signatures (RFC 9421) over
+  `@method`, `@scheme`, `@authority`, `@path`, `content-type` and
+  `content-digest` (RFC 9530, SHA-256). The key is the site's, published in
+  every storage description as a verification method `{storage}#{kid}`
+  referenced from `authentication`; `WebhookVerifier` in
+  [lws-client](https://github.com/ebremer/lws-client) checks such deliveries.
+- **When an inbox fails.** A `5xx`, a `429` or no answer is tried again after
+  2 seconds, then after 1, 10 and 60 minutes and 6 hours, the later ones on
+  cron. Five failed deliveries in a row deactivate the subscription, and a
+  `410 Gone` at once. A deactivated or expired subscription shows
+  `"active": false` for a week, then is deleted.
+
+```sh
+drush lws:notify:list alice                # the subscriptions to a storage
+drush lws:notify:cancel alice <uuid>
+drush lws:notify:key:rotate                # a new webhook signing key, as the web server's user
+drush queue:run lws_notify_delivery        # deliver what waits for cron now
 ```
 
 ## Access tokens
@@ -197,7 +249,8 @@ $settings['lws_outbound_allowlist'] = ['http://localhost:8080'];
 
 - Drupal 11.3 or later, PHP 8.3 or later.
 - [`ebremer/lws-client`](https://github.com/ebremer/lws-client), with
-  `JsonPatch::apply()`, which is not on Packagist yet and has no release. A site that installs this module must name
+  `JsonPatch::apply()`, RSA verification and, for `lws_notify`, `WebhookSigner`,
+  which is not on Packagist yet and has no release. A site that installs this module must name
   its repository and require its `main` branch itself:
 
   ```sh
@@ -280,7 +333,18 @@ SIMPLETEST_DB=sqlite://localhost//tmp/lws-test.sqlite vendor/bin/phpunit -c web/
   `/.well-known/lws-configuration` from the issuer, as clients do, and warns if
   a proxy or the web server does not pass it to Drupal.
 - **Run cron,** which deletes the files of recursively deleted resources and of
-  deleted storages.
+  deleted storages, and with `lws_notify` retries notification deliveries.
+- **Notifications** (`lws_notify`) are signed with keys kept like the
+  authorization server's, in `$settings['lws_notify_key_directory']` or
+  `lws_notify/keys` in the private file system; without one they go unsigned,
+  and the status report says so. They are delivered after each response is
+  sent, which PHP-FPM does without keeping the client waiting. Run as an Apache
+  module, PHP sends a response without a body, such as a `204` to `PUT` or
+  `DELETE`, only once it is done, so the client waits for the deliveries too;
+  the status report warns about it. There, either run PHP-FPM or turn off
+  *Deliver at the end of the request* and run the delivery queue often. Inboxes
+  must be HTTPS URLs of public hosts; in development, exempt others with
+  `lws_outbound_allowlist`.
 - **Web servers refuse some paths before Drupal sees them:**
   - Drupal's `.htaccess` answers `403` for any path segment that starts with a
     dot, such as `/lws/alice/root/.profile`. LWS never gives a resource such a

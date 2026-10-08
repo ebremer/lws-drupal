@@ -28,6 +28,10 @@ use Psr\Log\LoggerInterface;
  * Rotating removes the files of keys no longer published.
  *
  * The first key is made when one is first needed.
+ *
+ * Other modules keep keys for other purposes the same way, under a name of
+ * their own: lws_notify's webhook signing keys are "lws_notify" keys, in
+ * $settings['lws_notify_key_directory'] or "lws_notify/keys".
  */
 final class SigningKeys {
 
@@ -42,28 +46,56 @@ final class SigningKeys {
   private const FILE = '/^(\d{10})-([A-Za-z0-9_-]{43})\.jwk$/';
 
   /**
-   * The lock taken while a key is made.
+   * Constructs the key store.
+   *
+   * @param \Drupal\Core\Site\Settings $settings
+   *   The site settings.
+   * @param \Drupal\Core\Lock\LockBackendInterface $lock
+   *   The lock backend.
+   * @param \Drupal\Component\Datetime\TimeInterface $time
+   *   The time service.
+   * @param \Drupal\Core\Config\ConfigFactoryInterface $configFactory
+   *   The config factory.
+   * @param \Psr\Log\LoggerInterface $logger
+   *   The logger.
+   * @param string $name
+   *   The name of the key set: of its directory setting
+   *   "{name}_key_directory", its directory "{name}/keys" in the private file
+   *   system, and the lock taken while a key is made.
+   * @param int|null $retention
+   *   How long a key stays published after the next one was made, in
+   *   seconds; NULL for the access token lifetime plus the clock skew.
+   * @param string $purpose
+   *   What the keys are, for messages.
    */
-  private const LOCK = 'lws_authz_signing_key';
-
   public function __construct(
     private readonly Settings $settings,
     private readonly LockBackendInterface $lock,
     private readonly TimeInterface $time,
     private readonly ConfigFactoryInterface $configFactory,
     private readonly LoggerInterface $logger,
+    private readonly string $name = 'lws_authz',
+    private readonly ?int $retention = NULL,
+    private readonly string $purpose = 'access token signing key',
   ) {}
+
+  /**
+   * The setting that names the key directory.
+   */
+  public function directorySetting(): string {
+    return $this->name . '_key_directory';
+  }
 
   /**
    * The directory of the key files, or NULL if none is configured.
    */
   public function directory(): ?string {
-    $directory = $this->settings->get('lws_authz_key_directory');
+    $directory = $this->settings->get($this->directorySetting());
     if (is_string($directory) && $directory !== '') {
       return rtrim($directory, '/');
     }
     $private = $this->settings->get('file_private_path');
-    return is_string($private) && $private !== '' ? rtrim($private, '/') . '/lws_authz/keys' : NULL;
+    return is_string($private) && $private !== '' ? rtrim($private, '/') . '/' . $this->name . '/keys' : NULL;
   }
 
   /**
@@ -125,8 +157,9 @@ final class SigningKeys {
    */
   public function active(): array {
     $newest = $this->inventory()[0] ?? NULL;
+    $lock = $this->name . '_signing_key';
     if ($newest === NULL) {
-      if ($this->lock->acquire(self::LOCK)) {
+      if ($this->lock->acquire($lock)) {
         try {
           // Another request may have made it while this one waited.
           $newest = $this->inventory()[0] ?? NULL;
@@ -136,17 +169,17 @@ final class SigningKeys {
           }
         }
         finally {
-          $this->lock->release(self::LOCK);
+          $this->lock->release($lock);
         }
       }
       else {
-        $this->lock->wait(self::LOCK);
+        $this->lock->wait($lock);
         $newest = $this->inventory()[0] ?? NULL;
       }
     }
     $jwk = $newest === NULL ? NULL : $this->read($newest);
     if ($newest === NULL || $jwk === NULL) {
-      throw new KeysUnavailableException('This site has no usable access token signing key.');
+      throw new KeysUnavailableException(sprintf('This site has no usable %s.', $this->purpose));
     }
     return ['kid' => $newest['kid'], 'key' => SigningKey::fromJwk($jwk)];
   }
@@ -189,6 +222,9 @@ final class SigningKeys {
    * How long a key stays published after the next one was made, in seconds.
    */
   private function retention(): int {
+    if ($this->retention !== NULL) {
+      return $this->retention;
+    }
     $settings = $this->configFactory->get('lws_authz.settings');
     return (int) $settings->get('token_lifetime') + (int) $settings->get('clock_skew');
   }
@@ -202,7 +238,7 @@ final class SigningKeys {
    * @throws \Drupal\lws_authz\Token\KeysUnavailableException
    */
   private function generate(): string {
-    $directory = $this->directory() ?? throw new KeysUnavailableException('No signing key directory is configured: set $settings[\'lws_authz_key_directory\'] or the private file path.');
+    $directory = $this->directory() ?? throw new KeysUnavailableException(sprintf("No signing key directory is configured: set \$settings['%s'] or the private file path.", $this->directorySetting()));
     if (!is_dir($directory) && !@mkdir($directory, 0700, TRUE) && !is_dir($directory)) {
       throw new KeysUnavailableException(sprintf('Cannot create the signing key directory %s.', $directory));
     }
@@ -226,7 +262,7 @@ final class SigningKeys {
       @unlink($temporary);
       throw new KeysUnavailableException(sprintf('Cannot write a signing key to %s.', $directory));
     }
-    $this->logger->notice('Made the access token signing key @kid.', ['@kid' => $kid]);
+    $this->logger->notice('Made the @purpose @kid.', ['@purpose' => $this->purpose, '@kid' => $kid]);
     return $kid;
   }
 

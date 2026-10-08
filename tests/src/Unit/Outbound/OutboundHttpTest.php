@@ -82,6 +82,13 @@ final class OutboundHttpTest extends UnitTestCase {
   }
 
   /**
+   * How many requests were sent.
+   */
+  private function sentCount(): int {
+    return count($this->sent);
+  }
+
+  /**
    * Asserts that fetching a URL is refused before anything is sent.
    */
   private function assertRefused(OutboundHttp $http, string $url, string $reason): void {
@@ -201,6 +208,60 @@ final class OutboundHttpTest extends UnitTestCase {
     $this->assertRefused($http, 'https://as.example/jwks', 'larger than');
     $this->mock->append(new Response(200, [], str_repeat(' ', OutboundHttp::MAX_BYTES - 2) . '{}'));
     $this->assertSame(OutboundHttp::MAX_BYTES, strlen($http->get('https://as.example/jwks')->body));
+  }
+
+  /**
+   * Tests a POST: guarded like a GET, with its body, and no redirect.
+   */
+  public function testPost(): void {
+    $http = $this->http();
+    $this->mock->append(new Response(202), new Response(307, ['Location' => 'https://internal.example/inbox']));
+    $response = $http->post('https://as.example/inbox', '{"type":"Notification"}', ['Content-Type' => 'application/lws+json'], 3);
+    $this->assertSame(202, $response->status);
+    $request = $this->sent[0]['request'];
+    $this->assertSame('POST', $request->getMethod());
+    $this->assertSame('{"type":"Notification"}', (string) $request->getBody());
+    $this->assertSame('application/lws+json', $request->getHeaderLine('Content-Type'));
+    $this->assertSame(['as.example:443:93.184.215.14'], $this->sent[0]['options']['curl'][CURLOPT_RESOLVE]);
+    $this->assertSame(3, $this->sent[0]['options']['timeout']);
+    // A redirect is the answer; the POST is not sent again.
+    $this->assertSame(307, $http->post('https://as.example/inbox', '{}', [])->status);
+    $this->assertSame(2, $this->sentCount());
+    try {
+      $http->post('https://internal.example/inbox', '{}', []);
+      $this->fail('Posted to a private address');
+    }
+    catch (OutboundHttpException $e) {
+      $this->assertStringContainsString('POST https://internal.example/inbox: internal.example resolves to 10.0.0.5', $e->getMessage());
+    }
+    $this->assertSame(2, $this->sentCount());
+  }
+
+  /**
+   * Tests checking a URL without requesting it.
+   */
+  public function testAssertAllowed(): void {
+    $http = $this->http(['lws_outbound_allowlist' => ['http://localhost:8081']]);
+    $http->assertAllowed('https://as.example/inbox');
+    $http->assertAllowed('http://localhost:8081/inbox');
+    foreach ([
+      'http://as.example/inbox' => 'only HTTPS',
+      'https://internal.example/inbox' => 'not a public address',
+      'https://rebind.example/inbox' => 'not a public address',
+      'https://nowhere.example/inbox' => 'does not resolve',
+      'https://user@as.example/inbox' => 'no user information',
+      '/inbox' => 'not an absolute URL',
+    ] as $url => $reason) {
+      try {
+        $http->assertAllowed($url);
+        $this->fail("$url was allowed");
+      }
+      catch (OutboundHttpException $e) {
+        $this->assertStringContainsString($reason, $e->getMessage());
+        $this->assertStringStartsWith($url . ':', $e->getMessage());
+      }
+    }
+    $this->assertSame([], $this->sent);
   }
 
   /**

@@ -1,0 +1,65 @@
+lws_notify.settings:
+  type: config_object
+  label: 'LWS notification settings'
+  mapping:
+    include_actor:
+      type: boolean
+      label: 'Name the agent who made a change in its notifications'
+    limits:
+      type: mapping
+      label: 'Limits'
+      mapping:
+        subscriptions_per_agent:
+          type: integer
+          label: 'Subscriptions per agent and storage'
+          constraints:
+            Range:
+              min: 1
+        topics:
+          type: integer
+          label: 'Topics per subscription'
+          constraints:
+            Range:
+              min: 1
+        lifetime:
+          type: integer
+          label: 'Longest subscription lifetime, in seconds (0 for no limit)'
+          constraints:
+            Range:
+              min: 0
+    delivery:
+      type: mapping
+      label: 'Delivery'
+      mapping:
+        inline:
+          type: boolean
+          label: 'Deliver at the end of the request'
+        inline_budget:
+          type: integer
+          label: 'Seconds spent delivering at the end of a request'
+          constraints:
+            Range:
+              min: 1
+              max: 60
+        timeout:
+          type: integer
+          label: 'Timeout of one delivery, in seconds'
+          constraints:
+            Range:
+              min: 1
+              max: 30
+        retry_delays:
+          type: sequence
+          label: 'Seconds before each retry'
+          sequence:
+            type: integer
+            label: 'Delay'
+            constraints:
+              Range:
+                min: 1
+        max_failures:
+          type: integer
+          label: 'Failed deliveries in a row that deactivate a subscription'
+          constraints:
+            Range:
+              min: 1

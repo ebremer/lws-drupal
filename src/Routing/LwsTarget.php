@@ -33,7 +33,8 @@ final class LwsTarget {
    * @param string|null $service
    *   For the access services, "requests" or "grants".
    * @param string|null $recordId
-   *   For an entry of an access service, its UUID; NULL for the service.
+   *   For an entry of an access service or a subscription of the
+   *   notification service, its UUID; NULL for the service.
    */
   private function __construct(
     public readonly LwsArea $area,
@@ -94,6 +95,20 @@ final class LwsTarget {
   }
 
   /**
+   * The notification service, or one of its subscriptions.
+   *
+   * @param string $rawPath
+   *   The request path.
+   * @param string $storage
+   *   The storage slug.
+   * @param string|null $subscriptionId
+   *   The UUID of a subscription; NULL for the service itself, a container.
+   */
+  public static function notifications(string $rawPath, string $storage, ?string $subscriptionId): self {
+    return new self(LwsArea::Notifications, $rawPath, $storage, container: $subscriptionId === NULL, recordId: $subscriptionId);
+  }
+
+  /**
    * A well-formed path at which nothing can exist.
    */
   public static function unknown(string $rawPath, ?string $storage = NULL): self {
@@ -135,7 +150,9 @@ final class LwsTarget {
       LwsArea::Meta => ['GET', 'HEAD', 'PUT', 'PATCH', 'OPTIONS'],
       // The services are containers whose entries are created by POST, and
       // cancelled or revoked by DELETE (LWS Core §11.5).
-      LwsArea::Access => $this->recordId === NULL
+      // So is the notification service: its entries are subscriptions, and
+      // DELETE cancels one (lws10-notifications-webhook).
+      LwsArea::Access, LwsArea::Notifications => $this->recordId === NULL
         ? ['GET', 'HEAD', 'POST', 'OPTIONS']
         : ['GET', 'HEAD', 'DELETE', 'OPTIONS'],
       LwsArea::Description => ['GET', 'HEAD', 'OPTIONS'],

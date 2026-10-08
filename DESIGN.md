@@ -494,8 +494,9 @@ LWS clients always read content through its LWS URL.
    `Link: <{s}/>; rel="…lws#storage"` (§5.2.1, §9.2). A `405` adds `Allow`; a `415` adds
    `Accept-Patch`.
 8. **After commit.** The storage dispatches `LwsResourceEvent` (`created`, `updated`,
-   `metadata_updated`, `deleted`) once the transaction commits. `lws_notify` and `lws_index`
-   listen; nothing else depends on it.
+   `metadata_updated`, `deleted`) once the transaction has committed: right after the
+   operation, or at the end of the request when an outer transaction committed it, never from
+   the commit itself (S6). `lws_notify` and `lws_index` listen; nothing else depends on it.
 
 ### 5.5 Storage description
 
@@ -844,12 +845,15 @@ storage listings.
 | `DELETE access/grants/{id}` | Controllers | Revokes the grant: deletes it and its policies atomically. Takes effect on the next request |
 
 Stored documents gain an `id`. Notifications (§11.6, SHOULD) are sent when `lws_notify` is
-enabled:
+enabled (S6):
 
-- a `Create` activity for a new access request, delivered to subscribers of the requests
-  container (the controller);
-- a `Create` activity for a new access grant, delivered to the grant's `inbox` or the inbox of the
-  matching access request.
+- a `Create` activity for a new access request or grant, and a `Delete` when one is cancelled,
+  answered or revoked, delivered to the `inbox` it names;
+- a grant made by approving a request is also announced to the request's inbox, in the same
+  notification as the request's `Delete`.
+
+Controllers learn of new requests on the access page: topics are resources of the storage, so no
+subscription covers the requests service.
 
 The section is marked "needs to align" in the core, so the payload is the core notification data
 model.
@@ -867,23 +871,28 @@ are described briefly here; each gets its own design note when it starts.
   ["WebhookSubscription"]`.
 - **Subscriptions.** `POST` (`application/lws+json`: `type`, `topic[]`, `inbox`, `expires`) → `201`
   with `Location` and `{type, subscription, expires}`.
-  - The subscriber must be able to read every topic (§10.3.3).
+  - The subscriber must be able to read every topic (§10.3.3), through its client.
+  - Topics are resources of the storage; the storage URI stands for its root container.
   - A subscription is stored as an `lws_subscription` entity, with the subscriber's agent and
     client.
-  - `GET` lists the caller's subscriptions as an LWS container; `GET`/`DELETE` act on one.
+  - `GET` lists the caller's live subscriptions as an LWS container; `GET`/`DELETE` act on one,
+    for its agent or a controller.
 - **Delivery.**
   1. `LwsResourceEvent`s become `Create`, `Update` or `Delete` activities (§10.2.3).
-  2. Each matching subscription is checked against the PDP **at delivery time**, for the
-     subscriber's agent and client (§10.3.3).
-  3. Deliveries are queued (Queue API) and batched per request into one envelope.
+  2. Each subscription that covers the resource is checked against the PDP **when the change is
+     made**, for the subscriber's agent and client (§10.3.3). A queued retry checks again.
+  3. A request's activities are batched, one notification per subscription or inbox, and
+     delivered after the response is sent. Later retries, and what does not fit the time budget,
+     go through the Queue API, on cron.
   4. The `POST` to the inbox carries `Content-Digest: sha-256` (RFC 9530) and an RFC 9421
-     signature over `@method @scheme @authority @path content-type content-digest`, with `created`
-     and `keyid = {s}/#{thumbprint}`.
-  5. Failed deliveries retry with backoff; repeated failure deactivates the subscription.
-- **Signing key.** Published as a `verificationMethod` (`JsonWebKey`) in the storage description,
-  referenced from `authentication`.
+     signature over `@method @scheme @authority @path content-type content-digest`, with
+     `created`, `keyid = {s}#{kid}` and `alg`.
+  5. `5xx`, `429` and no answer are retried with backoff; other answers fail at once. Repeated
+     failure deactivates the subscription, and `410 Gone` does at once.
+- **Signing key.** The site's P-256 key, kept like the authorization server's, published in every
+  storage description as a `verificationMethod` (`JsonWebKey`) referenced from `authentication`.
 - **Privacy.** `actor` is omitted unless configured (Privacy §17.2). The SSRF guard applies to
-  inbox URLs.
+  inbox URLs, when subscribing and at every delivery.
 
 ### 7.2 `lws_index`: type index and type search
 
@@ -1047,6 +1056,7 @@ only), and these parts work without its HTTP layer:
 | `Auth\DidKey`, `Auth\ControlledIdentifierDocument`, `Model\VerificationMethod` | `did:key` resolution and CID documents (SSI-CID, `lws_identity`) |
 | `Model\StorageDescription`, `ContainerPage`, `Linkset`, `Access\*` | **Tests**: parsing the server's own output (round-trip conformance) |
 | `Notification\WebhookVerifier` | **Tests**: verifying our webhook signatures. Its `signatureBase()` is shared with the signer |
+| `Notification\WebhookSigner` | Signing webhook deliveries (`lws_notify`) |
 
 **Gaps to close upstream in `lws-client`.** Each would help clients as well.
 
@@ -1055,7 +1065,8 @@ only), and these parts work without its HTTP layer:
    Appendix A and edge cases), rather than the community suite.
 2. **RSA verification (RS256, PS256) in `VerificationKey`.** Most OpenID providers sign with RS256
    by default, Keycloak included. Today the client verifies only ES256, ES384 and EdDSA.
-3. **A `WebhookSigner`**, the counterpart of `WebhookVerifier`.
+3. **A `WebhookSigner`**, the counterpart of `WebhookVerifier`. *Written with S6,* and tested
+   against the conformance vectors: the Ed25519 one comes out byte for byte.
 4. **Publish to Packagist.** A drupal.org release can only depend on packages there. Until then,
    the site's `composer.json` uses a VCS repository.
 
@@ -1438,7 +1449,103 @@ with no adapters.
     20 inapplicable, as after A4;
   - Touchstone `auth/cid`: 22/22.
 
-**S6–S8.** These are `lws_notify`, `lws_index` and `lws_projection`, in that order, each optional
+**S6. Notifications (`lws_notify`).**
+
+- **Scope:** the notification service and webhook subscriptions; delivering changes to resources,
+  and access requests and grants; signing ([§7.1](#71-lws_notify-notifications-10-and-the-webhook-suite)).
+- **Spec:** §10, §11.6, §17.2; lws10-notifications-webhook.
+- **Exit:** Touchstone's notification tests, in `core`, and its webhook suite pass.
+
+**Done.** Differences from the plan above:
+
+- **Built as planned:**
+  - **`WebhookSigner` in `lws-client`.** It makes the `Content-Digest` (SHA-256 or SHA-512) and
+    the signature, with `created`, `keyid` and `alg`, through `WebhookVerifier::signatureBase()`.
+    It reproduces the Ed25519 conformance vector byte for byte, and its P-256 and P-384
+    signatures pass `WebhookVerifier`.
+  - **Resource events.** `LwsResourceEvent`, one per resource changed, carries the resource's
+    access context: as it is, or for a deleted one as it was. A recursive delete sends one per
+    member, members first.
+  - **The service.** `{s}/notifications/` (`LwsArea::Notifications`) is advertised with
+    `subscriptionType: ["WebhookSubscription"]`. A subscription request is refused with:
+    - `422` for a missing or unoffered `type`, a missing, empty or foreign `topic`, more than 32
+      topics, an `inbox` that is not an absolute http(s) URL or that the outbound guard refuses,
+      or an `expires` that is malformed or past. Why the guard refused an inbox is logged, not
+      told: what a host resolves to here is no subscriber's business;
+    - `403` for a topic the agent may not read, whether or not it exists, so the refusal tells
+      nothing;
+    - `429` beyond 20 live subscriptions per agent and storage;
+    - `415`, `400` and `413` as elsewhere. Subscribing is flood-limited to 60 an hour per agent.
+
+    A subscription lasts at most 30 days, which is also what one that asks for no end gets. Its
+    representation is that of `lws-server`: `id`, `type`, `subscription`, `topic`, `inbox`,
+    `expires` and `active`.
+  - **Delivery.**
+    - A subscription covers a resource if a topic is the resource or a container above it.
+    - The PDP decides for the subscriber's agent and client as the change is made.
+    - Activities have `id` (`urn:uuid:`), `type`, `object` (`id`, and `type`: `Container` or
+      `DataResource`, then the types clients declared), `published` (UTC, milliseconds), and
+      `target` or `origin`.
+    - One activity is sent as an object and several as an array, at most 100 in a notification.
+    - Deliveries are made on `kernel.terminate`, within a time budget (10 s). The first retry
+      (after 2 s) happens there; the later ones (1 min, 10 min, 1 h, 6 h) are queue items that
+      cron runs when they are due (`DelayedRequeueException`). A queued retry keeps only the
+      activities the subscriber may still read.
+    - Outcomes are classified as `lws-server` does: `5xx`, `429` and no answer are retried; `410`
+      deactivates; any other answer, or a URL the guard refuses for good, is a failure. Five
+      failed deliveries in a row deactivate a subscription.
+  - **Keys.** `SigningKeys` now takes a name, a retention and a purpose, so `lws_notify` keeps its
+    P-256 keys like the authorization server's, in `$settings['lws_notify_key_directory']` or
+    `lws_notify/keys`, with a retired key published for an hour. `lws` gained
+    `StorageKeysInterface`: a storage service that also implements it adds verification methods,
+    which the description lists under `verificationMethod` and references from `authentication`.
+    Without a usable key, deliveries go unsigned, and the status report says why.
+  - **Outbound.** `OutboundHttp` gained `post()`, which follows no redirect (a `3xx` is the
+    answer), and `assertAllowed()`, the guard's check without a request.
+  - **Administration:**
+    - a *Subscriptions* tab on each storage, listing subscriptions with how their deliveries
+      fare, and *Cancel*;
+    - a *Notifications* settings tab;
+    - status report entries for the webhook key, the delivery queue, and inline delivery under
+      mod_php (below);
+    - Drush `lws:notify:list`, `lws:notify:cancel`, `lws:notify:key:rotate` and
+      `lws:notify:key:list`.
+- **Built differently:**
+  - **Authorization is decided when the change is made,** rather than when it is delivered: the
+    core asks about read access "at the time the event occurs". A queued retry decides again, so
+    a revocation meanwhile stops it too.
+  - **Events are dispatched after the transaction, not from its commit.** A Drupal transaction
+    commits in its destructor. There PHP 8.3 lets no fiber switch, and Drupal suspends the
+    current fiber to batch entity loads, so a listener that loaded an entity failed with "Cannot
+    switch fibers". The commit callback now only records the events. `StorageManager` dispatches
+    them once the operation's transaction is released, or at the end of the request
+    (`needs_destruction`) when an outer transaction committed them.
+  - **Access requests and grants** go to the inboxes they name, not to subscribers of the
+    requests service (see §6.6).
+  - **Inline delivery and mod_php.** Under PHP-FPM the response is complete before deliveries
+    start. As an Apache module, PHP completes a response without a body only when it is done:
+    measured on the development site with a 4-second inbox, a `201` with `Content-Length`
+    returned in 0.3 s, but a `204` to `PUT` waited 4.4 s. The status report warns about this,
+    and the settings can leave all delivery to cron.
+- **Left out:**
+  - WebSocket and server-sent-event channels;
+  - limits per inbox host: the per-agent limits and flood control bound how much one agent can
+    make the site send;
+  - a slow inbox costs each delivery up to the timeout (5 s), within a request's budget (10 s).
+    One that keeps timing out is deactivated; one that answers slowly is not.
+- **Verified:**
+  - 578 tests; phpcs and phpstan (level 8) are clean. `lws-client`: 199 tests, phpstan
+    clean;
+  - Touchstone `core`: 117 passed, 0 failed, 6 inapplicable, up from 102, 1 and 20. The
+    notification tests pass, and so does `access-grant-inbox-notified`, the SHOULD that waited
+    for S6. Still inapplicable: four pagination tests (a page size under five),
+    `linkset-put-405-when-unsupported`, and `notification-not-delivered-for-unreadable-resource`,
+    which needs a server where access to a container does not reach its members;
+  - Touchstone `notifications/webhook`: 11/11, the MAY retry and deactivation included;
+  - the development site allow-lists its own origin, `http://localhost:8899`, as Touchstone
+    subscribes with the storage URI as the inbox of the subscriptions it never delivers to.
+
+**S7–S8.** These are `lws_index` and `lws_projection`, in that order, each optional
 ([§7](#7-optional-modules)).
 
 ### Authorization module steps
@@ -1902,8 +2009,8 @@ makes. Where `lws-server` (the Java implementation) chose differently, that is n
    with OpenID through `simple_oauth`) would make the site a complete stack. Is that in scope, or
    is the Keycloak `lws-authn` the IdP?
 4. **Q4. Coupling to `ebremer/lws-client`.** *Decided 2026-10-08: reuse it.* `JsonPatch::apply()`
-   was added with S4, and RSA verification with A5. The client still needs a `WebhookSigner` (by
-   S6), and a tagged release on Packagist (before a drupal.org release).
+   was added with S4, RSA verification with A5, and a `WebhookSigner` with S6. The client still
+   needs a tagged release on Packagist (before a drupal.org release).
 5. **Q5. Separate storage hostname.** Should it be a hard requirement, or a recommendation with a
    status-report warning (as designed)?
 6. **Q6. DPoP.** `lws-server` supports DPoP-bound tokens. Is DPoP wanted for 1.0, or later (A6)?

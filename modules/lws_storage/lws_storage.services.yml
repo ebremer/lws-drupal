@@ -27,6 +27,10 @@ services:
       - '@config.factory'
       - '@uuid'
       - '@datetime.time'
+      - '@event_dispatcher'
+      - '@lws_storage.resource_links'
+    tags:
+      - { name: needs_destruction }
   Drupal\lws_storage\StorageManager: '@lws_storage.storage_manager'
 
   lws_storage.linksets:

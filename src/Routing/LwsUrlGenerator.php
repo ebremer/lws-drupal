@@ -93,6 +93,18 @@ final class LwsUrlGenerator {
   }
 
   /**
+   * The URI of the notification service, or of one of its subscriptions.
+   *
+   * @param string $storage
+   *   The storage slug.
+   * @param string|null $id
+   *   The UUID of a subscription; NULL for the service.
+   */
+  public function notificationsUri(string $storage, ?string $id = NULL): string {
+    return $this->storageUri($storage) . 'notifications/' . ($id ?? '');
+  }
+
+  /**
    * The URI of a resource's linkset.
    *
    * @param string $storage
@@ -116,6 +128,7 @@ final class LwsUrlGenerator {
       LwsArea::Resource => $this->resourceUri($target->storage, $target->segments, $target->container),
       LwsArea::Meta => $this->metaUri($target->storage, (string) $target->metaId),
       LwsArea::Access => $this->accessUri($target->storage, (string) $target->service, $target->recordId),
+      LwsArea::Notifications => $this->notificationsUri($target->storage, $target->recordId),
       LwsArea::Unknown, LwsArea::Malformed => NULL,
     };
   }

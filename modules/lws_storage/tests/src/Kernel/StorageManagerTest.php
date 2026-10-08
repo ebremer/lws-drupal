@@ -8,6 +8,7 @@ use Drupal\Core\Entity\EntityStorageException;
 use Drupal\lws\Routing\ResourceName;
 use Drupal\lws_storage\Entity\LwsResource;
 use Drupal\lws_storage\Entity\LwsResourceInterface;
+use Drupal\lws_storage\LwsResourceEvent;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
 
@@ -173,6 +174,92 @@ final class StorageManagerTest extends LwsStorageKernelTestBase {
     $remaining = reset($resources);
     $this->assertInstanceOf(LwsResourceInterface::class, $remaining);
     $this->assertSame((int) $bob->id(), $remaining->getLwsStorageId());
+  }
+
+  /**
+   * The events recorded so far, which are then forgotten.
+   *
+   * @param \ArrayObject<int, list<string>> $events
+   *   The events.
+   *
+   * @return list<list<string>>
+   *   What they were.
+   *
+   * @phpstan-impure
+   */
+  private static function take(\ArrayObject $events): array {
+    $taken = array_values($events->getArrayCopy());
+    $events->exchangeArray([]);
+    return $taken;
+  }
+
+  /**
+   * Tests that changes are announced once they are committed.
+   */
+  public function testResourceEvents(): void {
+    /** @var \ArrayObject<int, list<string>> $events */
+    $events = new \ArrayObject();
+    $dispatcher = $this->container->get('event_dispatcher');
+    $names = [
+      LwsResourceEvent::CREATED,
+      LwsResourceEvent::UPDATED,
+      LwsResourceEvent::METADATA_UPDATED,
+      LwsResourceEvent::DELETED,
+    ];
+    $storageUri = self::BASE . '/lws/alice/';
+    foreach ($names as $name) {
+      $dispatcher->addListener($name, function (LwsResourceEvent $event, string $name) use ($events, $storageUri): void {
+        $events[] = [
+          substr($name, strlen('lws_storage.resource.')),
+          substr($event->resource->uri, strlen($storageUri)),
+          substr((string) $event->parentUri(), strlen($storageUri)),
+        ];
+      });
+    }
+    $body = static function (string $content) {
+      $stream = fopen('php://memory', 'w+b');
+      self::assertNotFalse($stream);
+      fwrite($stream, $content);
+      rewind($stream);
+      return $stream;
+    };
+    $storage = $this->storages->createStorage('alice', 'Alice');
+    $notes = $this->storages->createContainer($this->resources->root($storage), 'notes');
+    $a = $this->storages->createResource($notes, 'a.txt', FALSE, $body('a'), 'text/plain');
+    $this->storages->replaceContent($a, $body('changed'), NULL);
+    $this->storages->changeMetadata($a, static fn (LwsResourceInterface $current) => $current->getUserMetadata());
+    $this->assertSame([
+      ['created', 'root/notes/', 'root/'],
+      ['created', 'root/notes/a.txt', 'root/notes/'],
+      ['updated', 'root/notes/a.txt', 'root/notes/'],
+      ['metadata_updated', 'root/notes/a.txt', 'root/notes/'],
+    ], self::take($events));
+
+    // Inside an outer transaction, a change is announced once that commits;
+    // one that is rolled back, never.
+    $database = $this->container->get('database');
+    $outer = $database->startTransaction();
+    $this->storages->createResource($notes, 'b.txt', FALSE, $body('b'), 'text/plain');
+    $this->assertSame([], self::take($events));
+    unset($outer);
+    $this->storages->dispatchCommitted();
+    $this->assertSame([['created', 'root/notes/b.txt', 'root/notes/']], self::take($events));
+    $outer = $database->startTransaction();
+    $this->storages->createResource($notes, 'c.txt', FALSE, $body('c'), 'text/plain');
+    $outer->rollBack();
+    unset($outer);
+    $this->storages->destruct();
+    $this->assertSame([], self::take($events));
+
+    // A recursive delete announces each resource it removed, members first.
+    $this->storages->deleteResource($notes, TRUE);
+    $deleted = self::take($events);
+    $this->assertSame(['deleted', 'root/notes/', 'root/'], array_pop($deleted));
+    sort($deleted);
+    $this->assertSame([
+      ['deleted', 'root/notes/a.txt', 'root/notes/'],
+      ['deleted', 'root/notes/b.txt', 'root/notes/'],
+    ], $deleted);
   }
 
 }

@@ -1,0 +1,20 @@
+<?php
+
+/**
+ * @file
+ * Install and uninstall functions for LWS Notifications.
+ */
+
+declare(strict_types=1);
+
+use Drupal\lws_notify\Delivery\Deliverer;
+
+/**
+ * Implements hook_uninstall().
+ *
+ * Deliveries waiting for cron go with the module. The webhook signing keys
+ * stay in their directory, for a reinstall to use.
+ */
+function lws_notify_uninstall(): void {
+  \Drupal::queue(Deliverer::QUEUE)->deleteQueue();
+}

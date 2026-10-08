@@ -9,6 +9,8 @@ use Drupal\Component\Uuid\UuidInterface;
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Database\Connection;
 use Drupal\Core\Database\IntegrityConstraintViolationException;
+use Drupal\Core\Database\Transaction;
+use Drupal\Core\DestructableInterface;
 use Drupal\Core\Entity\EntityStorageException;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\Queue\QueueFactory;
@@ -24,7 +26,9 @@ use Drupal\lws_storage\Content\StoredContent;
 use Drupal\lws_storage\Entity\LwsResourceInterface;
 use Drupal\lws_storage\Entity\LwsStorageInterface;
 use Drupal\lws_storage\Linkset\UserMetadata;
+use Symfony\Component\EventDispatcher\EventDispatcherInterface as SymfonyEventDispatcherInterface;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
+use Symfony\Contracts\EventDispatcher\EventDispatcherInterface;
 
 /**
  * Creates, replaces and deletes storages and resources.
@@ -34,8 +38,12 @@ use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
  * moves the resource's reference to it (DESIGN.md §5.3): readers never see a
  * half-written resource, and a failed transaction leaves the old content in
  * place and deletes the new bytes.
+ *
+ * Each change to a resource is announced with an LwsResourceEvent once its
+ * transaction commits: right after it, or when the request ends if an outer
+ * transaction committed it.
  */
-final class StorageManager {
+final class StorageManager implements DestructableInterface {
 
   /**
    * The queue of files to delete once nothing uses them.
@@ -46,6 +54,13 @@ final class StorageManager {
    * The largest content a change computed from the current one may read.
    */
   public const MAX_CHANGE_BYTES = 16777216;
+
+  /**
+   * Events of committed changes, waiting to be dispatched.
+   *
+   * @var list<array{string, \Drupal\lws_storage\LwsResourceEvent}>
+   */
+  private array $committed = [];
 
   public function __construct(
     private readonly EntityTypeManagerInterface $entityTypeManager,
@@ -58,6 +73,8 @@ final class StorageManager {
     private readonly ConfigFactoryInterface $configFactory,
     private readonly UuidInterface $uuid,
     private readonly TimeInterface $time,
+    private readonly EventDispatcherInterface $events,
+    private readonly ResourceLinks $links,
   ) {}
 
   /**
@@ -255,6 +272,7 @@ final class StorageManager {
       $this->content->delete($content->uri);
       throw $e;
     }
+    $this->commit($transaction);
     return $current;
   }
 
@@ -315,6 +333,7 @@ final class StorageManager {
       }
       throw $e;
     }
+    $this->commit($transaction);
     return $current;
   }
 
@@ -345,12 +364,14 @@ final class StorageManager {
       if ($parent !== NULL) {
         $this->resources->touch($parent);
       }
+      $this->announce(LwsResourceEvent::METADATA_UPDATED, [$current]);
     }
     catch (\Throwable $e) {
       $transaction->rollBack();
       $this->forget($resource, $resource->getParent());
       throw $e;
     }
+    $this->commit($transaction);
     return $current;
   }
 
@@ -377,6 +398,7 @@ final class StorageManager {
       $fid = (int) $previous->id();
       $this->database->transactionManager()->addPostTransactionCallback(fn () => $this->releaseFile($fid));
     }
+    $this->announce(LwsResourceEvent::UPDATED, [$current]);
   }
 
   /**
@@ -436,6 +458,8 @@ final class StorageManager {
 
       $parent = $current->getParent();
       $deleted = [...$members, $current];
+      // Described while they still exist.
+      $this->announce(LwsResourceEvent::DELETED, $deleted);
       $fids = [];
       $bytes = 0;
       foreach ($deleted as $item) {
@@ -465,6 +489,7 @@ final class StorageManager {
       $this->forget($resource, $resource->getParent());
       throw $e;
     }
+    $this->commit($transaction);
   }
 
   /**
@@ -517,13 +542,91 @@ final class StorageManager {
         $resource->setUserMetadata($metadata, $this->time->getRequestTime());
       }
       $resource->save();
-      return $resource;
+      $this->announce(LwsResourceEvent::CREATED, [$resource]);
     }
     catch (\Throwable $e) {
       $transaction->rollBack();
       $this->forget($parent);
       throw $e;
     }
+    $this->commit($transaction);
+    return $resource;
+  }
+
+  /**
+   * Dispatches the events of committed changes.
+   *
+   * Never from the commit itself: a transaction commits in its destructor,
+   * where PHP before 8.4 lets no fiber switch, and loading an entity inside a
+   * fiber switches fibers.
+   */
+  public function dispatchCommitted(): void {
+    while ($this->committed !== []) {
+      $events = $this->committed;
+      $this->committed = [];
+      foreach ($events as [$name, $event]) {
+        $this->events->dispatch($event, $name);
+      }
+    }
+  }
+
+  /**
+   * {@inheritdoc}
+   *
+   * Dispatches the events of changes an outer transaction committed.
+   */
+  public function destruct(): void {
+    $this->dispatchCommitted();
+  }
+
+  /**
+   * Ends an operation's transaction, and announces what it committed.
+   *
+   * When it is the outermost transaction, it commits here; otherwise its
+   * changes are announced once the outermost one commits.
+   *
+   * @param \Drupal\Core\Database\Transaction|null $transaction
+   *   The operation's transaction, which is released.
+   *
+   * @param-out null $transaction
+   */
+  private function commit(?Transaction &$transaction): void {
+    $transaction = NULL;
+    $this->dispatchCommitted();
+  }
+
+  /**
+   * Announces changes to resources once the transaction commits.
+   *
+   * Called inside the transaction that makes the changes. The events are
+   * made now, while deleted resources still exist, and dispatched only if
+   * the transaction commits.
+   *
+   * @param string $name
+   *   The event: an LwsResourceEvent constant.
+   * @param list<\Drupal\lws_storage\Entity\LwsResourceInterface> $resources
+   *   The resources, all of one storage.
+   */
+  private function announce(string $name, array $resources): void {
+    if ($resources === [] || ($this->events instanceof SymfonyEventDispatcherInterface && !$this->events->hasListeners($name))) {
+      return;
+    }
+    $storage = $this->entityTypeManager->getStorage('lws_storage')->load($resources[0]->getLwsStorageId());
+    if (!$storage instanceof LwsStorageInterface) {
+      return;
+    }
+    $time = $this->time->getCurrentMicroTime();
+    $events = [];
+    foreach ($this->links->contextsOf($storage, $resources) as $i => $context) {
+      $events[] = new LwsResourceEvent($context, (int) $resources[$i]->id(), (string) $resources[$i]->uuid(), $time);
+    }
+    $this->database->transactionManager()->addPostTransactionCallback(function (bool $committed) use ($name, $events): void {
+      if ($committed) {
+        foreach ($events as $event) {
+          $this->committed[] = [$name, $event];
+        }
+      }
+    });
   }
 
   /**

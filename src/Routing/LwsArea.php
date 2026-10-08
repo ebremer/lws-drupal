@@ -20,6 +20,9 @@ enum LwsArea: string {
   // The access request or access grant service, or one of its entries.
   case Access = 'access';
 
+  // The notification service, or one of its subscriptions.
+  case Notifications = 'notifications';
+
   // Well-formed, but nothing can exist there.
   case Unknown = 'unknown';
 
@@ -35,6 +38,7 @@ enum LwsArea: string {
       self::Resource => '/_lws/resource',
       self::Meta => '/_lws/meta',
       self::Access => '/_lws/access',
+      self::Notifications => '/_lws/notifications',
       self::Unknown, self::Malformed => '/_lws/unknown',
     };
   }

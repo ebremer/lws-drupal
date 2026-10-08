@@ -1,0 +1,83 @@
+# The notification service of a storage, {storage}/notifications/, and its
+# subscriptions, {storage}/notifications/{uuid} (lws10-notifications-webhook).
+# LwsPathProcessor maps them here; LwsRouteEnhancer supplies $lws_target.
+lws_notify.notifications:
+  path: '/_lws/notifications'
+  defaults:
+    _controller: '\Drupal\lws_notify\Controller\NotificationController::read'
+  methods: [GET, HEAD]
+  requirements:
+    # The controller decides, for the agent and the subscription.
+    _access: 'TRUE'
+  options:
+    _lws: TRUE
+    _auth: ['lws_bearer']
+    no_cache: TRUE
+
+lws_notify.notifications.post:
+  path: '/_lws/notifications'
+  defaults:
+    _controller: '\Drupal\lws_notify\Controller\NotificationController::post'
+  methods: [POST]
+  requirements:
+    # The controller decides: any authenticated agent may subscribe, to what
+    # it may read.
+    _access: 'TRUE'
+  options:
+    _lws: TRUE
+    _auth: ['lws_bearer']
+    no_cache: TRUE
+
+lws_notify.notifications.delete:
+  path: '/_lws/notifications'
+  defaults:
+    _controller: '\Drupal\lws_notify\Controller\NotificationController::delete'
+  methods: [DELETE]
+  requirements:
+    # The controller decides: the subscriber and the storage's controllers.
+    _access: 'TRUE'
+  options:
+    _lws: TRUE
+    _auth: ['lws_bearer']
+    no_cache: TRUE
+
+lws_notify.settings:
+  path: '/admin/config/services/lws/notifications'
+  defaults:
+    _form: '\Drupal\lws_notify\Form\NotificationSettingsForm'
+    _title: 'Notifications'
+  requirements:
+    _permission: 'administer lws'
+
+# The subscriptions to a storage: its administrators and owner may see and
+# cancel them.
+lws_notify.storage_subscriptions:
+  path: '/admin/content/lws/{lws_storage}/subscriptions'
+  defaults:
+    _controller: '\Drupal\lws_notify\Controller\SubscriptionAdminController::page'
+    _title_callback: '\Drupal\lws_notify\Controller\SubscriptionAdminController::title'
+  requirements:
+    _custom_access: '\Drupal\lws_storage\Controller\StorageAccessController::access'
+    lws_storage: '\d+'
+  options:
+    _admin_route: TRUE
+    parameters:
+      lws_storage:
+        type: entity:lws_storage
+
+lws_notify.subscription_cancel:
+  path: '/admin/content/lws/{lws_storage}/subscriptions/{lws_subscription}/cancel'
+  defaults:
+    _form: '\Drupal\lws_notify\Form\SubscriptionCancelForm'
+    _title: 'Cancel subscription'
+  requirements:
+    _custom_access: '\Drupal\lws_storage\Controller\StorageAccessController::access'
+    lws_storage: '\d+'
+    lws_subscription: '\d+'
+  options:
+    _admin_route: TRUE
+    parameters:
+      lws_storage:
+        type: entity:lws_storage
+      lws_subscription:
+        type: entity:lws_subscription

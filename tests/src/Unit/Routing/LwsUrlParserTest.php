@@ -52,6 +52,13 @@ final class LwsUrlParserTest extends UnitTestCase {
       'linkset' => ['/lws/alice/meta/0b5c3a5e-6a3e-4c1f-9d2e-3f1a2b3c4d5e', LwsArea::Meta, [], FALSE],
       'access requests' => ['/lws/alice/access/requests/', LwsArea::Access, [], TRUE],
       'an access grant' => ['/lws/alice/access/grants/0b5c3a5e-6a3e-4c1f-9d2e-3f1a2b3c4d5e', LwsArea::Access, [], FALSE],
+      'notification service' => ['/lws/alice/notifications/', LwsArea::Notifications, [], TRUE],
+      'a subscription' => [
+        '/lws/alice/notifications/0b5c3a5e-6a3e-4c1f-9d2e-3f1a2b3c4d5e',
+        LwsArea::Notifications,
+        [],
+        FALSE,
+      ],
     ];
   }
 
@@ -112,6 +119,21 @@ final class LwsUrlParserTest extends UnitTestCase {
   }
 
   /**
+   * Tests the notification service and its subscriptions.
+   */
+  public function testNotifications(): void {
+    $parser = $this->parser();
+    $service = $parser->parse('/lws/alice/notifications/');
+    $this->assertNotNull($service);
+    $this->assertNull($service->recordId);
+    $this->assertSame(['GET', 'HEAD', 'POST', 'OPTIONS'], $service->allowedMethods());
+    $entry = $parser->parse('/lws/alice/notifications/0b5c3a5e-6a3e-4c1f-9d2e-3f1a2b3c4d5e');
+    $this->assertNotNull($entry);
+    $this->assertSame('0b5c3a5e-6a3e-4c1f-9d2e-3f1a2b3c4d5e', $entry->recordId);
+    $this->assertSame(['GET', 'HEAD', 'DELETE', 'OPTIONS'], $entry->allowedMethods());
+  }
+
+  /**
    * Paths under the prefix at which nothing can exist.
    *
    * @return array<string, array{string}>
@@ -127,7 +149,10 @@ final class LwsUrlParserTest extends UnitTestCase {
       'internal path' => ['/lws/_lws/resource'],
       'root without its slash' => ['/lws/alice/root'],
       'a name that is not root' => ['/lws/alice/rooted/'],
-      'unknown service' => ['/lws/alice/notifications/'],
+      'unknown service' => ['/lws/alice/types/'],
+      'notifications without its slash' => ['/lws/alice/notifications'],
+      'subscription that is not a UUID' => ['/lws/alice/notifications/42'],
+      'subscription with a trailing slash' => ['/lws/alice/notifications/0b5c3a5e-6a3e-4c1f-9d2e-3f1a2b3c4d5e/'],
       'linkset without an id' => ['/lws/alice/meta/'],
       'linkset with an upper-case id' => ['/lws/alice/meta/0B5C3A5E-6A3E-4C1F-9D2E-3F1A2B3C4D5E'],
       'linkset with a trailing slash' => ['/lws/alice/meta/0b5c3a5e-6a3e-4c1f-9d2e-3f1a2b3c4d5e/'],

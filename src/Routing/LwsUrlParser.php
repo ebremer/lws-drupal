@@ -18,7 +18,9 @@ use Drupal\Core\Config\ConfigFactoryInterface;
  * Layout under the prefix (DESIGN.md §4.1):
  * - {storage}/            the storage description;
  * - {storage}/root/…      containers ("…/") and data resources;
- * - {storage}/meta/{uuid} linkset resources.
+ * - {storage}/meta/{uuid} linkset resources;
+ * - {storage}/access/{requests|grants}/[{uuid}] the access services;
+ * - {storage}/notifications/[{uuid}] the notification service.
  */
 final class LwsUrlParser {
 
@@ -119,6 +121,9 @@ final class LwsUrlParser {
     }
     if (preg_match('#^access/(requests|grants)/(' . substr(self::UUID, 2, -2) . ')?$#', $path, $matches) === 1) {
       return LwsTarget::access($rawPath, $storage, $matches[1], ($matches[2] ?? '') === '' ? NULL : $matches[2]);
+    }
+    if (preg_match('#^notifications/(' . substr(self::UUID, 2, -2) . ')?$#', $path, $matches) === 1) {
+      return LwsTarget::notifications($rawPath, $storage, ($matches[1] ?? '') === '' ? NULL : $matches[1]);
     }
     return LwsTarget::unknown($rawPath, $storage);
   }

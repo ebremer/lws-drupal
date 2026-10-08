@@ -1,0 +1,58 @@
+services:
+  logger.channel.lws_notify:
+    parent: logger.channel_base
+    arguments: ['lws_notify']
+
+  # The keys that sign webhook deliveries: kept like the authorization
+  # server's, under the name lws_notify; a retired key stays published for an
+  # hour.
+  lws_notify.signing_keys:
+    class: Drupal\lws_authz\Server\SigningKeys
+    arguments: ['@settings', '@lock', '@datetime.time', '@config.factory', '@logger.channel.lws_notify', 'lws_notify', 3600, 'webhook signing key']
+
+  lws_notify.subscriptions:
+    class: Drupal\lws_notify\Subscriptions
+    arguments: ['@entity_type.manager', '@lws.url_generator', '@datetime.time', '@config.factory']
+  Drupal\lws_notify\Subscriptions: '@lws_notify.subscriptions'
+
+  lws_notify.subscription_parser:
+    class: Drupal\lws_notify\SubscriptionParser
+    arguments: ['@lws.url_parser', '@lws.url_generator', '@lws_storage.resource_repository', '@lws_storage.resource_links', '@datetime.time', '@config.factory']
+  Drupal\lws_notify\SubscriptionParser: '@lws_notify.subscription_parser'
+
+  # The NotificationService and webhook keys of storage descriptions.
+  lws_notify.notification_services:
+    class: Drupal\lws_notify\NotificationServices
+    arguments: ['@lws.url_generator', '@lws_notify.signing_keys', '@logger.channel.lws_notify']
+    tags:
+      - { name: lws.storage_service, priority: 50 }
+
+  lws_notify.deliverer:
+    class: Drupal\lws_notify\Delivery\Deliverer
+    arguments:
+      - '@lws.outbound_http'
+      - '@lws_notify.signing_keys'
+      - '@lws_notify.subscriptions'
+      - '@Drupal\lws\Access\AccessDecisionInterface'
+      - '@queue'
+      - '@config.factory'
+      - '@datetime.time'
+      - '@logger.channel.lws_notify'
+  Drupal\lws_notify\Delivery\Deliverer: '@lws_notify.deliverer'
+
+  lws_notify.notifier:
+    class: Drupal\lws_notify\Delivery\Notifier
+    arguments:
+      - '@lws_notify.subscriptions'
+      - '@Drupal\lws\Access\AccessDecisionInterface'
+      - '@lws_notify.deliverer'
+      - '@lws.url_generator'
+      - '@uuid'
+      - '@datetime.time'
+      - '@request_stack'
+      - '@config.factory'
+      - '@logger.channel.lws_notify'
+    tags:
+      - { name: event_subscriber }
+      - { name: needs_destruction }
+  Drupal\lws_notify\Delivery\Notifier: '@lws_notify.notifier'

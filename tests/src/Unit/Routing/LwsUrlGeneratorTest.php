@@ -64,6 +64,11 @@ final class LwsUrlGeneratorTest extends UnitTestCase {
         '/lws/alice/meta/0b5c3a5e-6a3e-4c1f-9d2e-3f1a2b3c4d5e',
         'https://storage.example/lws/alice/meta/0b5c3a5e-6a3e-4c1f-9d2e-3f1a2b3c4d5e',
       ],
+      'notification service' => ['/lws/alice/notifications/', 'https://storage.example/lws/alice/notifications/'],
+      'subscription' => [
+        '/lws/alice/notifications/0b5c3a5e-6a3e-4c1f-9d2e-3f1a2b3c4d5e',
+        'https://storage.example/lws/alice/notifications/0b5c3a5e-6a3e-4c1f-9d2e-3f1a2b3c4d5e',
+      ],
     ];
   }
 

@@ -65,6 +65,8 @@ final class UrlSpaceTest extends KernelTestBase {
   public function testNoStorages(): void {
     $this->assertProblem($this->send('GET', '/lws/alice/'), 404, self::BASE . '/lws/alice/');
     $this->assertProblem($this->send('GET', '/lws/alice/root/'), 404, self::BASE . '/lws/alice/root/');
+    // Nor does a notification service, without lws_notify.
+    $this->assertProblem($this->send('GET', '/lws/alice/notifications/'), 404, self::BASE . '/lws/alice/notifications/');
     // A name with a file extension gets problem details, not core's fast 404.
     $this->assertProblem($this->send('GET', '/lws/alice/root/notes.txt'), 404, self::BASE . '/lws/alice/root/notes.txt');
   }
@@ -99,7 +101,7 @@ final class UrlSpaceTest extends KernelTestBase {
     $paths = [
       '/lws/alice',
       '/lws/Alice/',
-      '/lws/alice/notifications/',
+      '/lws/alice/nothing/',
       '/lws/alice/meta/0b5c3a5e-6a3e-4c1f-9d2e-3f1a2b3c4d5e/',
     ];
     foreach ($paths as $path) {
@@ -154,6 +156,8 @@ final class UrlSpaceTest extends KernelTestBase {
    */
   public function testPrefixChange(): void {
     $this->assertProblem($this->send('GET', '/lws/alice/root/'), 404, self::BASE . '/lws/alice/root/');
+    // Nor does a notification service, without lws_notify.
+    $this->assertProblem($this->send('GET', '/lws/alice/notifications/'), 404, self::BASE . '/lws/alice/notifications/');
     $this->config('lws.settings')->set('prefix', '/storage')->save();
     $this->assertProblem($this->send('GET', '/storage/alice/root/'), 404, self::BASE . '/storage/alice/root/');
     $response = $this->send('GET', '/lws/alice/root/');
