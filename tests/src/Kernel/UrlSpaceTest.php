@@ -115,10 +115,17 @@ final class UrlSpaceTest extends KernelTestBase {
    * whether or not the resource exists.
    */
   public function testOptions(): void {
-    foreach (['/lws/alice/', '/lws/alice/root/', '/lws/alice/root/notes'] as $path) {
+    $allow = [
+      '/lws/alice/' => 'GET, HEAD, OPTIONS',
+      '/lws/alice/root/' => 'GET, HEAD, POST, OPTIONS',
+      '/lws/alice/root/notes/' => 'GET, HEAD, POST, DELETE, OPTIONS',
+      '/lws/alice/root/notes' => 'GET, HEAD, PUT, DELETE, OPTIONS',
+      '/lws/alice/meta/0b8f6a52-5ab1-4d2b-9a0a-3f6a1c2d4e5f' => 'GET, HEAD, OPTIONS',
+    ];
+    foreach ($allow as $path => $methods) {
       $response = $this->send('OPTIONS', $path);
       $this->assertSame(204, $response->getStatusCode(), $path);
-      $this->assertSame('GET, HEAD, OPTIONS', $response->headers->get('Allow'), $path);
+      $this->assertSame($methods, $response->headers->get('Allow'), $path);
     }
   }
 

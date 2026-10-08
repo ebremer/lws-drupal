@@ -41,6 +41,55 @@ final class LwsHttpException extends HttpException {
   }
 
   /**
+   * Creates a 409 Conflict error.
+   */
+  public static function conflict(string $detail): self {
+    return new self(409, $detail);
+  }
+
+  /**
+   * Creates a 412 Precondition Failed error.
+   */
+  public static function preconditionFailed(): self {
+    return new self(412, 'The resource does not match the conditions of the request.');
+  }
+
+  /**
+   * Creates a 413 Content Too Large error.
+   */
+  public static function contentTooLarge(int $limit): self {
+    return new self(413, sprintf('The content is larger than %d bytes.', $limit));
+  }
+
+  /**
+   * Creates a 415 Unsupported Media Type error.
+   */
+  public static function unsupportedMediaType(string $detail): self {
+    return new self(415, $detail);
+  }
+
+  /**
+   * Creates a 422 Unprocessable Content error.
+   */
+  public static function unprocessable(string $detail): self {
+    return new self(422, $detail);
+  }
+
+  /**
+   * Creates a 428 Precondition Required error.
+   */
+  public static function preconditionRequired(): self {
+    return new self(428, 'This storage requires If-Match on changes.');
+  }
+
+  /**
+   * Creates a 507 Insufficient Storage error.
+   */
+  public static function insufficientStorage(): self {
+    return new self(507, 'The storage quota does not allow this.');
+  }
+
+  /**
    * Creates a 503 Service Unavailable error.
    */
   public static function serviceUnavailable(string $detail): self {

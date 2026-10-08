@@ -96,14 +96,20 @@ final class LwsTarget {
    * The methods for the kind of resource the target addresses.
    *
    * Depends only on the shape of the URL, never on whether the resource
-   * exists, so that OPTIONS cannot reveal existence.
+   * exists, so that OPTIONS cannot reveal existence. Containers take POST,
+   * data resources PUT; the root container cannot be deleted.
    *
    * @return list<string>
    *   HTTP method names.
    */
   public function allowedMethods(): array {
     return match ($this->area) {
-      LwsArea::Description, LwsArea::Resource, LwsArea::Meta => ['GET', 'HEAD', 'OPTIONS'],
+      LwsArea::Resource => match (TRUE) {
+        $this->isRoot() => ['GET', 'HEAD', 'POST', 'OPTIONS'],
+        $this->container => ['GET', 'HEAD', 'POST', 'DELETE', 'OPTIONS'],
+        default => ['GET', 'HEAD', 'PUT', 'DELETE', 'OPTIONS'],
+      },
+      LwsArea::Description, LwsArea::Meta => ['GET', 'HEAD', 'OPTIONS'],
       LwsArea::Unknown, LwsArea::Malformed => [],
     };
   }

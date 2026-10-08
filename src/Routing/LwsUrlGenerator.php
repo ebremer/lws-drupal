@@ -79,6 +79,18 @@ final class LwsUrlGenerator {
   }
 
   /**
+   * The URI of a resource's linkset.
+   *
+   * @param string $storage
+   *   The storage slug.
+   * @param string $uuid
+   *   The UUID of the resource the linkset describes.
+   */
+  public function metaUri(string $storage, string $uuid): string {
+    return $this->storageUri($storage) . 'meta/' . $uuid;
+  }
+
+  /**
    * The canonical URI of a target, if it has one.
    */
   public function targetUri(LwsTarget $target): ?string {
@@ -88,7 +100,7 @@ final class LwsUrlGenerator {
     return match ($target->area) {
       LwsArea::Description => $this->storageUri($target->storage),
       LwsArea::Resource => $this->resourceUri($target->storage, $target->segments, $target->container),
-      LwsArea::Meta => $this->storageUri($target->storage) . 'meta/' . $target->metaId,
+      LwsArea::Meta => $this->metaUri($target->storage, (string) $target->metaId),
       LwsArea::Unknown, LwsArea::Malformed => NULL,
     };
   }

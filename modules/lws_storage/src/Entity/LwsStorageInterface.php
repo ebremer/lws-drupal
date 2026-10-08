@@ -39,6 +39,16 @@ interface LwsStorageInterface extends ContentEntityInterface, EntityChangedInter
   public function getAuthorizationServerId(): ?string;
 
   /**
+   * The most content the storage may hold, in bytes; NULL for no limit.
+   */
+  public function getQuotaBytes(): ?int;
+
+  /**
+   * The content the storage holds, in bytes.
+   */
+  public function getUsedBytes(): int;
+
+  /**
    * Whether the storage serves requests; a blocked storage answers 503.
    */
   public function isEnabled(): bool;

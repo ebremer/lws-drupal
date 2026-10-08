@@ -4,10 +4,34 @@ services:
     arguments: ['@entity_type.manager', '@database', '@datetime.time']
   Drupal\lws_storage\ResourceRepository: '@lws_storage.resource_repository'
 
+  lws_storage.content_store:
+    class: Drupal\lws_storage\Content\ContentStore
+    arguments: ['@file_system', '@stream_wrapper_manager', '@config.factory']
+  Drupal\lws_storage\Content\ContentStore: '@lws_storage.content_store'
+
+  lws_storage.content_sweeper:
+    class: Drupal\lws_storage\Content\ContentSweeper
+    arguments: ['@entity_type.manager', '@database', '@file.usage', '@file_system', '@lws_storage.content_store', '@datetime.time']
+  Drupal\lws_storage\Content\ContentSweeper: '@lws_storage.content_sweeper'
+
   lws_storage.storage_manager:
     class: Drupal\lws_storage\StorageManager
-    arguments: ['@entity_type.manager', '@database', '@lws_storage.resource_repository']
+    arguments:
+      - '@entity_type.manager'
+      - '@database'
+      - '@lws_storage.resource_repository'
+      - '@lws_storage.content_store'
+      - '@file.validator'
+      - '@file.usage'
+      - '@queue'
+      - '@config.factory'
+      - '@uuid'
   Drupal\lws_storage\StorageManager: '@lws_storage.storage_manager'
+
+  lws_storage.resource_links:
+    class: Drupal\lws_storage\ResourceLinks
+    arguments: ['@lws.url_generator', '@lws_storage.storage_registry']
+  Drupal\lws_storage\ResourceLinks: '@lws_storage.resource_links'
 
   lws_storage.description_builder:
     class: Drupal\lws_storage\StorageDescriptionBuilder
@@ -30,7 +54,7 @@ services:
 
   lws_storage.access_check:
     class: Drupal\lws_storage\Access\LwsAccessCheck
-    arguments: ['@Drupal\lws\Access\AccessDecisionInterface', '@lws_storage.storage_registry', '@lws.url_generator']
+    arguments: ['@Drupal\lws\Access\AccessDecisionInterface', '@lws_storage.resource_links', '@lws_storage.resource_repository']
     tags:
       - { name: access_check, applies_to: _lws_access }
 

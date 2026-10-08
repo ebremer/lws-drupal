@@ -7,6 +7,7 @@ namespace Drupal\lws_storage\Drush\Commands;
 use Consolidation\OutputFormatters\StructuredData\RowsOfFields;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\lws\Routing\LwsUrlGenerator;
+use Drupal\lws_storage\Content\ContentSweeper;
 use Drupal\lws_storage\Entity\LwsStorageInterface;
 use Drupal\lws_storage\StorageManager;
 use Drush\Attributes as CLI;
@@ -26,6 +27,7 @@ final class LwsStorageCommands extends DrushCommands {
     private readonly StorageManager $storages,
     private readonly LwsUrlGenerator $urls,
     private readonly EntityTypeManagerInterface $entityTypeManager,
+    private readonly ContentSweeper $sweeper,
   ) {
     parent::__construct();
   }
@@ -44,10 +46,17 @@ final class LwsStorageCommands extends DrushCommands {
   #[CLI\Option(name: 'controller', description: 'The URI of an agent with full control of the storage. Repeat for several.')]
   #[CLI\Option(name: 'owner', description: 'The ID of the Drupal user who administers the storage.')]
   #[CLI\Option(name: 'authorization-server', description: 'The ID of the trusted authorization server whose tokens it accepts; defaults to the site default (see lws:as:list).')]
+  #[CLI\Option(name: 'quota', description: 'The most content the storage may hold, in bytes. No limit by default.')]
   #[CLI\Usage(name: 'drush lws:storage:create alice --controller=https://id.example/alice', description: 'Creates the storage /lws/alice/ controlled by that agent.')]
   public function createStorage(
     string $slug,
-    array $options = ['label' => NULL, 'controller' => [], 'owner' => NULL, 'authorization-server' => NULL],
+    array $options = [
+      'label' => NULL,
+      'controller' => [],
+      'owner' => NULL,
+      'authorization-server' => NULL,
+      'quota' => NULL,
+    ],
   ): void {
     $storage = $this->storages->createStorage(
       $slug,
@@ -55,6 +64,7 @@ final class LwsStorageCommands extends DrushCommands {
       array_values(array_map('strval', (array) $options['controller'])),
       $options['owner'] === NULL ? NULL : (int) $options['owner'],
       $options['authorization-server'] === NULL ? NULL : (string) $options['authorization-server'],
+      $options['quota'] === NULL ? NULL : (int) $options['quota'],
     );
     $this->logger()?->success(dt('Created storage @slug at @uri', [
       '@slug' => $storage->getSlug(),
@@ -75,6 +85,8 @@ final class LwsStorageCommands extends DrushCommands {
     'uri' => 'Storage URI',
     'controllers' => 'Controllers',
     'authorization_server' => 'Authorization server',
+    'used' => 'Used',
+    'quota' => 'Quota',
     'status' => 'Status',
   ])]
   #[CLI\DefaultTableFields(fields: ['slug', 'uri', 'controllers', 'authorization_server', 'status'])]
@@ -88,12 +100,31 @@ final class LwsStorageCommands extends DrushCommands {
           'uri' => $this->urls->storageUri($storage->getSlug()),
           'controllers' => implode(', ', $storage->getControllers()),
           'authorization_server' => $storage->getAuthorizationServerId() ?? '(default)',
+          'used' => $storage->getUsedBytes(),
+          'quota' => $storage->getQuotaBytes() ?? '',
           'status' => $storage->isEnabled() ? 'enabled' : 'blocked',
         ];
       }
     }
     ksort($rows);
     return new RowsOfFields($rows);
+  }
+
+  /**
+   * Deletes LWS content that nothing refers to any more.
+   *
+   * Unused file entities of former versions and deleted resources, and bytes
+   * left without a file entity by a process that died while writing. Bytes
+   * younger than an hour are kept: they may belong to a write in progress.
+   */
+  #[CLI\Command(name: 'lws:gc')]
+  #[CLI\Usage(name: 'drush lws:gc', description: 'Sweeps unreferenced content. Files queued by deletes are deleted on cron, or with drush queue:run lws_storage_gc.')]
+  public function collectGarbage(): void {
+    $swept = $this->sweeper->sweep();
+    $this->logger()?->success(dt('Deleted @files unused file entities and @bytes stray files.', [
+      '@files' => $swept['files'],
+      '@bytes' => $swept['bytes'],
+    ]));
   }
 
   /**

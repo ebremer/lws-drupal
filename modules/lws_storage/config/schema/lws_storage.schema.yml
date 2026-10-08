@@ -1,0 +1,16 @@
+lws_storage.settings:
+  type: config_object
+  label: 'LWS storage settings'
+  mapping:
+    scheme:
+      type: string
+      label: 'The stream wrapper scheme that holds the content of data resources, such as "private".'
+    max_upload_bytes:
+      type: integer
+      label: 'The largest content accepted in one request, in bytes. 0 leaves the limit to PHP and the web server.'
+    max_recursive_delete:
+      type: integer
+      label: 'The most resources one recursive delete may remove; more answers 422.'
+    require_if_match:
+      type: boolean
+      label: 'Whether changes must be conditional on If-Match; without it they answer 428.'

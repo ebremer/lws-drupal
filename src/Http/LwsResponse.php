@@ -52,6 +52,29 @@ final class LwsResponse {
   }
 
   /**
+   * A response without a body, such as a 201, 204 or 304.
+   *
+   * @param int $status
+   *   The status code.
+   * @param list<string> $links
+   *   Link header values, one link each.
+   * @param string|null $etag
+   *   The entity tag, unquoted; it is always strong.
+   * @param array<string, string> $headers
+   *   Further headers, such as Location.
+   */
+  public static function empty(int $status, array $links = [], ?string $etag = NULL, array $headers = []): Response {
+    $response = new Response('', $status, ['Cache-Control' => self::CACHE_CONTROL] + $headers);
+    if ($links !== []) {
+      $response->headers->set('Link', $links);
+    }
+    if ($etag !== NULL) {
+      $response->setEtag($etag);
+    }
+    return $response;
+  }
+
+  /**
    * A strong entity tag for a representation.
    *
    * @param string ...$parts

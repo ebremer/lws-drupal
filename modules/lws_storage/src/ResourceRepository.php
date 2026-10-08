@@ -80,19 +80,88 @@ final class ResourceRepository {
   }
 
   /**
-   * Records a change to a container's membership.
+   * The member of a container with a stored name, if there is one.
+   *
+   * @param \Drupal\lws_storage\Entity\LwsResourceInterface $container
+   *   The container.
+   * @param string $name
+   *   The decoded name, with a slash for a container.
+   */
+  public function findChild(LwsResourceInterface $container, string $name): ?LwsResourceInterface {
+    $ids = $this->storage()->getQuery()
+      ->accessCheck(FALSE)
+      ->condition('parent', $container->id())
+      ->condition('name', $name)
+      ->execute();
+    foreach ($this->storage()->loadMultiple($ids) as $resource) {
+      // The database may compare case-insensitively.
+      if ($resource instanceof LwsResourceInterface && $resource->getName() === $name) {
+        return $resource;
+      }
+    }
+    return NULL;
+  }
+
+  /**
+   * The resource with a UUID in a storage, if there is one.
+   */
+  public function findByUuid(LwsStorageInterface $storage, string $uuid): ?LwsResourceInterface {
+    $resources = $this->storage()->loadByProperties(['storage' => $storage->id(), 'uuid' => $uuid]);
+    $resource = reset($resources);
+    return $resource instanceof LwsResourceInterface ? $resource : NULL;
+  }
+
+  /**
+   * All resources below a container, at any depth.
+   *
+   * @param \Drupal\lws_storage\Entity\LwsResourceInterface $container
+   *   The container.
+   * @param bool $lock
+   *   Whether to lock their rows, inside a transaction, until it ends.
+   *
+   * @return list<\Drupal\lws_storage\Entity\LwsResourceInterface>
+   *   The resources, deepest first.
+   */
+  public function descendants(LwsResourceInterface $container, bool $lock = FALSE): array {
+    $prefix = $container->getPath();
+    $query = $this->database->select('lws_resource', 'r')
+      ->fields('r', ['id', 'path'])
+      ->condition('storage', $container->getLwsStorageId())
+      ->condition('path', $this->database->escapeLike($prefix) . '_%', 'LIKE');
+    if ($lock) {
+      $query->forUpdate();
+    }
+    $paths = [];
+    foreach ($query->execute() ?? [] as $row) {
+      // LIKE may ignore case; paths are case-sensitive.
+      if (str_starts_with((string) $row->path, $prefix)) {
+        $paths[(int) $row->id] = (string) $row->path;
+      }
+    }
+    uasort($paths, static fn (string $a, string $b): int => substr_count($b, '/') <=> substr_count($a, '/') ?: strcmp($b, $a));
+    $resources = $this->storage()->loadMultiple(array_keys($paths));
+    return array_values(array_filter($resources, static fn ($resource): bool => $resource instanceof LwsResourceInterface));
+  }
+
+  /**
+   * Records a change to a container's membership or its members' metadata.
    *
    * Increments the version in the database rather than through the loaded
    * entity, so that concurrent changes to one container are all counted. Call
-   * it inside the transaction that changes the membership.
+   * it inside the transaction that makes the change; it locks the row until
+   * the transaction ends.
+   *
+   * @return bool
+   *   FALSE if the container no longer exists.
    */
-  public function touch(LwsResourceInterface $container): void {
-    $this->database->update('lws_resource')
+  public function touch(LwsResourceInterface $container): bool {
+    $updated = $this->database->update('lws_resource')
       ->expression('version', '[version] + 1')
       ->fields(['changed' => $this->time->getRequestTime()])
       ->condition('id', $container->id())
       ->execute();
     $this->storage()->resetCache([(int) $container->id()]);
+    return $updated > 0;
   }
 
   /**

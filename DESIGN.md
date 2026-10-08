@@ -385,8 +385,9 @@ ETags are opaque and strong:
 
 **[D11]** Each version of a data resource's content is a permanent, managed `file` entity,
 referenced from the resource's `content` field. The bytes live at
-`{scheme}://lws/{storage-uuid}/{aa}/{bb}/{resource-uuid}.{version}`. The scheme defaults to
-`private`; any stream wrapper works, for example S3 through `s3fs` or Flysystem.
+`{scheme}://lws/{storage-uuid}/{aa}/{bb}/{resource-uuid}.{random}`. The random suffix, rather
+than the version, means two concurrent writes to one resource never share a file. The scheme
+defaults to `private`; any stream wrapper works, for example S3 through `s3fs` or Flysystem.
 
 - **Writing.** The request body (`php://input`) is streamed straight to the new URI and hashed as
   it goes. Core's `file.repository` `writeData()` is not used, because it holds the whole body in
@@ -1089,12 +1090,13 @@ merge with passing tests; the build order is at the end of this section.
 - the page-cache request policy;
 - placeholder responses (`UrlSpaceController`), which S1 replaces.
 
-Since then, S1 added the settings form and `hook_requirements()`, and A1 the seams, the SSRF guard
-and the CORS subscriber. Q4 was decided for using `lws-client` directly, with no adapters.
+Since then, S1 added the settings form and `hook_requirements()`, A1 the seams, the SSRF guard
+and the CORS subscriber, and S2 `Preconditions`. Q4 was decided for using `lws-client` directly,
+with no adapters.
 
 **Still to do in Step 0:**
 
-- `Preconditions` and `PaginationCursor`;
+- `PaginationCursor` (with S3);
 - the MySQL and PostgreSQL CI matrix.
 
 ### Storage module steps
@@ -1155,6 +1157,46 @@ and the CORS subscriber. Q4 was decided for using `lws-client` directly, with no
 - **Exit:** kernel tests on containment integrity under concurrent creates (two processes, same
   `Slug`); functional tests for every status code in [§5.2](#52-operations); the PHP client's
   `quickstart.php`, with auth disabled, runs green.
+
+**Done.** Differences from the plan above:
+
+- **More was built:**
+  - a read-only linkset at `meta/{uuid}` with the server-managed `up` and `type`, because every
+    create, read and listing must link one (§9.1); S4 makes it writable;
+  - the `lws:gc` Drush command, which sweeps unused file entities and bytes left without one
+    (older than an hour, so a write in progress is never touched);
+  - `drush lws:storage:create --quota`, and used and quota bytes in `lws:storage:list`.
+- **Built differently:**
+  - methods a URL's shape does not allow (`PUT` on a container, `POST` on a data resource,
+    `DELETE` on the root) are refused with `405` before authentication, like `OPTIONS`;
+  - file URIs take a random suffix instead of the version (see [§5.3](#53-content-as-managed-files));
+  - core always runs its insecure-upload check, which refuses names such as `app.js`. Content is
+    validated under its stored UUID name, so that check does not apply to LWS names;
+  - data resources are served with exactly their stored media type: Symfony's `prepare()` and
+    PHP's `default_charset` would add `charset=UTF-8` to any `text/*` type. `BinaryFileResponse`
+    also left the file's length on a `416`, which is fixed;
+  - `require_if_match` is a site-wide setting for now; per-storage settings come with S5;
+  - a create locks the parent first, so a create racing a recursive delete of its container
+    gets `404` instead of leaving an orphan.
+- **Left for later:** user `Link` metadata on create and `Prefer: set-linkset` (S4); a
+  `StreamedResponse` for remote stream wrappers, which may not seek (S5); the request-size check
+  against `post_max_size` in the status report (S5).
+- **Exit criteria:**
+  - concurrent creates: a kernel test forces the lost race (a hook takes the name between the
+    check and the insert) and the create retries with the next name. Through Apache, 20
+    simultaneous `POST`s with the same `Slug` all got `201` with 20 distinct names, and the
+    container's version rose by exactly 20;
+  - every status in [§5.2](#52-operations) that S2 covers has a kernel test: `201`, `204`, `206`,
+    `304`, `400`, `401`, `403`, `404`, `405`, `409`, `412`, `413`, `415`, `416`, `422`, `428`,
+    `507`;
+  - `quickstart.php`, with a bearer token in place of token exchange (A2) and without `PATCH`
+    (S4), runs green.
+- **Touchstone,** with harness-issued tokens (see A1): containers 18/18, conditional requests
+  9/9, discovery 7/7, storage authorization 17/17, data resources 16/17 (the failure is `PATCH`,
+  S4), linksets 6/9 (writes, S4). Its authorization-server tests ran against the trusted
+  `lws-server`, which refuses to issue tokens for other storages (A2 brings Drupal's own).
+  Pagination, access grants and notifications were inapplicable.
+- **Verified:** 258 tests; and through Apache with curl, the PHP LWS client and Touchstone.
 
 **S3. Container listings, content negotiation and pagination.**
 
@@ -1245,7 +1287,8 @@ and the CORS subscriber. Q4 was decided for using `lws-client` directly, with no
     accepted. Restarting `lws-server` with a new key showed rotation: the new key's tokens were
     accepted after one refresh, the old key's refused. Minting for other storages would need a
     change to `lws-server`;
-  - **Touchstone waits for S2:** it provisions its test containers with `POST`.
+  - **Touchstone waits for S2:** it provisions its test containers with `POST`. (After S2,
+    `core/storage_authorization` passes 17/17 with harness-issued tokens.)
 - **Verified:** 203 tests; and through Apache with curl, the PHP LWS client (with
   `BearerTokenAuthenticator`) and a live `lws-server`. The SSRF guard was checked with Drupal's
   real cURL client: an HTTPS fetch, the size cap, loopback refusal, and the pin (a fetch pinned to

@@ -1,0 +1,7 @@
+name: 'LWS Storage test'
+type: module
+description: 'Test helpers for LWS Storage: a file validator and a simulated race for a name.'
+package: Testing
+hidden: true
+dependencies:
+  - lws:lws_storage

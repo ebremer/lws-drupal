@@ -6,6 +6,7 @@ namespace Drupal\lws_storage\Entity;
 
 use Drupal\Core\Entity\ContentEntityInterface;
 use Drupal\Core\Entity\EntityChangedInterface;
+use Drupal\file\FileInterface;
 
 /**
  * A container or data resource in an LWS storage.
@@ -56,5 +57,32 @@ interface LwsResourceInterface extends ContentEntityInterface, EntityChangedInte
    * It changes with the resource and, for a container, with its membership.
    */
   public function getVersion(): int;
+
+  /**
+   * The managed file with the current content of a data resource.
+   *
+   * @return \Drupal\file\FileInterface|null
+   *   The file; NULL for a container.
+   */
+  public function getContentFile(): ?FileInterface;
+
+  /**
+   * The media type of a data resource's content; NULL for a container.
+   */
+  public function getMediaType(): ?string;
+
+  /**
+   * The size of a data resource's content in bytes; NULL for a container.
+   */
+  public function getSize(): ?int;
+
+  /**
+   * The strong entity tag of the resource's representation, unquoted.
+   *
+   * For a container, "c" and its version, which changes with its membership.
+   * For a data resource, a digest of its content and media type, so that a
+   * PUT of the same bytes keeps it (DESIGN.md §5.2).
+   */
+  public function getEtag(): string;
 
 }

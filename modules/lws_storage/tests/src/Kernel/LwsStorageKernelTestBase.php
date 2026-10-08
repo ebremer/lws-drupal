@@ -10,6 +10,7 @@ use Drupal\lws_storage\ResourceRepository;
 use Drupal\lws_storage\StorageManager;
 use Ebremer\Lws\Auth\Jwt;
 use Ebremer\Lws\Auth\SigningKey;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -36,7 +37,7 @@ abstract class LwsStorageKernelTestBase extends KernelTestBase {
   /**
    * {@inheritdoc}
    */
-  protected static $modules = ['system', 'user', 'lws', 'lws_authz', 'lws_storage'];
+  protected static $modules = ['system', 'user', 'file', 'lws', 'lws_authz', 'lws_storage'];
 
   /**
    * The signing key of the test authorization server.
@@ -62,14 +63,27 @@ abstract class LwsStorageKernelTestBase extends KernelTestBase {
 
   /**
    * {@inheritdoc}
+   *
+   * Content goes to the private file system, as it does by default.
+   */
+  protected function setUpFilesystem(): void {
+    parent::setUpFilesystem();
+    mkdir($this->siteDirectory . '/private', 0775);
+    $this->setSetting('file_private_path', $this->siteDirectory . '/private');
+  }
+
+  /**
+   * {@inheritdoc}
    */
   protected function setUp(): void {
     parent::setUp();
     $this->installEntitySchema('user');
+    $this->installEntitySchema('file');
+    $this->installSchema('file', ['file_usage']);
     $this->installEntitySchema('lws_storage');
     $this->installEntitySchema('lws_resource');
     $this->installEntitySchema('date_format');
-    $this->installConfig(['system', 'lws', 'lws_authz']);
+    $this->installConfig(['system', 'file', 'lws', 'lws_authz', 'lws_storage']);
     $this->config('lws.settings')->set('base_url', self::BASE)->save();
     $this->storages = $this->container->get('lws_storage.storage_manager');
     $this->resources = $this->container->get('lws_storage.resource_repository');
@@ -136,18 +150,38 @@ abstract class LwsStorageKernelTestBase extends KernelTestBase {
    *   The HTTP method.
    * @param string $path
    *   The raw path, with any query string.
-   * @param array<string, string> $headers
+   * @param array<string, string|list<string>> $headers
    *   Request headers.
+   * @param string|null $body
+   *   The request body.
    */
-  protected function send(string $method, string $path, array $headers = []): Response {
-    $request = Request::create(self::BASE . $path, $method);
+  protected function send(string $method, string $path, array $headers = [], ?string $body = NULL): Response {
+    $request = Request::create(self::BASE . $path, $method, [], [], [], [], $body);
     if ($this->agent !== NULL && !isset($headers['Authorization'])) {
       $headers['Authorization'] = 'Bearer ' . $this->token($this->agent);
     }
+    // Request::create() sets a form Content-Type on POST; clients may send
+    // none.
+    $request->headers->remove('Content-Type');
     foreach ($headers as $name => $value) {
       $request->headers->set($name, $value);
     }
-    return $this->container->get('http_kernel')->handle($request);
+    $response = $this->container->get('http_kernel')->handle($request);
+    // As DrupalKernel::handle() does, which byte ranges and HEAD depend on.
+    $response->prepare($request);
+    return $response;
+  }
+
+  /**
+   * The body a response sends.
+   */
+  protected function body(Response $response): string {
+    if (!$response instanceof BinaryFileResponse) {
+      return (string) $response->getContent();
+    }
+    ob_start();
+    $response->sendContent();
+    return (string) ob_get_clean();
   }
 
   /**

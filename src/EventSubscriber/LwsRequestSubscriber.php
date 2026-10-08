@@ -10,10 +10,14 @@ use Drupal\lws\Routing\LwsUrlParser;
 use Symfony\Component\EventDispatcher\EventSubscriberInterface;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\Event\RequestEvent;
+use Symfony\Component\HttpKernel\Exception\MethodNotAllowedHttpException;
 use Symfony\Component\HttpKernel\KernelEvents;
 
 /**
  * Handles LWS requests that core would otherwise answer before routing.
+ *
+ * Also refuses, with 405, methods the shape of the URL does not allow, such
+ * as PUT on a container, before anything is authenticated or looked up.
  *
  * - Malformed paths: core's RedirectLeadingSlashesSubscriber redirects any
  *   path containing "//" to the path with the slashes collapsed, which in
@@ -41,7 +45,7 @@ final class LwsRequestSubscriber implements EventSubscriberInterface {
   }
 
   /**
-   * Rejects malformed paths and answers OPTIONS.
+   * Rejects malformed paths and disallowed methods, and answers OPTIONS.
    */
   public function onRequest(RequestEvent $event): void {
     if (!$event->isMainRequest()) {
@@ -55,10 +59,14 @@ final class LwsRequestSubscriber implements EventSubscriberInterface {
     if ($target->area === LwsArea::Malformed) {
       throw LwsHttpException::forUnaddressable($target);
     }
+    $methods = $target->allowedMethods();
     if (!$request->isMethod('OPTIONS')) {
+      // Nothing can exist where no method is allowed: routing answers 404.
+      if ($methods !== [] && !in_array($request->getMethod(), $methods, TRUE)) {
+        throw new MethodNotAllowedHttpException($methods);
+      }
       return;
     }
-    $methods = $target->allowedMethods();
     if ($methods === []) {
       throw LwsHttpException::forUnaddressable($target);
     }

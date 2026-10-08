@@ -244,15 +244,23 @@ final class StorageHttpTest extends LwsStorageKernelTestBase {
     $this->assertSame(self::STORAGE . 'root/', $this->json($this->send('GET', '/lws/alice/root/?page=abc'))['id']);
 
     // OPTIONS answers from the shape of the URL, existing or not.
-    foreach (['/lws/alice/root/', '/lws/alice/root/missing/', '/lws/bob/'] as $path) {
+    $allow = [
+      '/lws/alice/root/' => 'GET, HEAD, POST, OPTIONS',
+      '/lws/alice/root/missing/' => 'GET, HEAD, POST, DELETE, OPTIONS',
+      '/lws/bob/' => 'GET, HEAD, OPTIONS',
+    ];
+    foreach ($allow as $path => $methods) {
       $response = $this->send('OPTIONS', $path);
       $this->assertSame(204, $response->getStatusCode(), $path);
-      $this->assertSame('GET, HEAD, OPTIONS', $response->headers->get('Allow'), $path);
+      $this->assertSame($methods, $response->headers->get('Allow'), $path);
     }
 
-    $post = $this->send('POST', '/lws/alice/root/');
-    $this->assertProblem($post, 405, self::STORAGE . 'root/');
-    $this->assertSame('GET, HEAD, OPTIONS', $post->headers->get('Allow'));
+    // So do refusals of the methods a URL does not take, before anything
+    // else is checked.
+    $put = $this->send('PUT', '/lws/alice/root/', ['Authorization' => '']);
+    $this->assertProblem($put, 405, self::STORAGE . 'root/');
+    $this->assertSame('GET, HEAD, POST, OPTIONS', $put->headers->get('Allow'));
+    $this->assertProblem($this->send('PATCH', '/lws/alice/root/missing'), 405, self::STORAGE . 'root/missing');
   }
 
   /**

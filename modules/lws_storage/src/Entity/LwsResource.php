@@ -11,6 +11,8 @@ use Drupal\Core\Entity\EntityStorageInterface;
 use Drupal\Core\Entity\EntityTypeInterface;
 use Drupal\Core\Field\BaseFieldDefinition;
 use Drupal\Core\StringTranslation\TranslatableMarkup;
+use Drupal\file\FileInterface;
+use Drupal\lws\Http\LwsResponse;
 use Drupal\lws_storage\LwsResourceStorageSchema;
 use Drupal\views\EntityViewsData;
 
@@ -87,6 +89,31 @@ class LwsResource extends ContentEntityBase implements LwsResourceInterface {
       ->setSetting('max_length', 16)
       ->setSetting('is_ascii', TRUE)
       ->addPropertyConstraints('value', ['AllowedValues' => ['choices' => ['container', 'data']]]);
+
+    // The current version of a data resource's content. Core's file field
+    // tracks the file's usage by the resource.
+    $fields['content'] = BaseFieldDefinition::create('file')
+      ->setLabel(new TranslatableMarkup('Content'))
+      ->setDescription(new TranslatableMarkup('The managed file with the current content of a data resource.'))
+      ->setSetting('target_type', 'file')
+      ->setSetting('file_extensions', '')
+      ->setSetting('file_directory', 'lws')
+      ->setSetting('uri_scheme', 'private');
+
+    $fields['content_sha256'] = BaseFieldDefinition::create('string')
+      ->setLabel(new TranslatableMarkup('Content SHA-256'))
+      ->setDescription(new TranslatableMarkup('The SHA-256 digest of the content, base64url-encoded.'))
+      ->setSetting('max_length', 43)
+      ->setSetting('is_ascii', TRUE)
+      ->setSetting('case_sensitive', TRUE);
+
+    $fields['creator'] = BaseFieldDefinition::create('uri')
+      ->setLabel(new TranslatableMarkup('Creator'))
+      ->setDescription(new TranslatableMarkup('The agent that created the resource. For audit only.'));
+
+    $fields['creator_client'] = BaseFieldDefinition::create('uri')
+      ->setLabel(new TranslatableMarkup('Creator client'))
+      ->setDescription(new TranslatableMarkup('The client the creating agent used. For audit only.'));
 
     $fields['version'] = BaseFieldDefinition::create('integer')
       ->setLabel(new TranslatableMarkup('Version'))
@@ -179,6 +206,39 @@ class LwsResource extends ContentEntityBase implements LwsResourceInterface {
    */
   public function getVersion(): int {
     return (int) $this->get('version')->value;
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function getContentFile(): ?FileInterface {
+    $file = $this->get('content')->entity;
+    return $file instanceof FileInterface ? $file : NULL;
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function getMediaType(): ?string {
+    return $this->getContentFile()?->getMimeType();
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function getSize(): ?int {
+    $size = $this->getContentFile()?->getSize();
+    return $size === NULL ? NULL : (int) $size;
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function getEtag(): string {
+    if ($this->isContainer()) {
+      return 'c' . $this->getVersion();
+    }
+    return LwsResponse::etag((string) $this->get('content_sha256')->value, (string) $this->getMediaType());
   }
 
 }

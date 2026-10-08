@@ -9,32 +9,40 @@ is in [DESIGN.md](DESIGN.md).
 |---|---|
 | `lws` | The LWS URL space under `/lws`, problem details, content negotiation, CORS, the guard on outbound requests, settings |
 | `lws_authz` | Access tokens: trusted authorization servers, token validation, the access decision |
-| `lws_storage` | Storages and their containers: the storage description, container listings, Drush commands |
+| `lws_storage` | Storages and their resources: the storage description, containers, data resources, linksets, Drush commands |
 
 ## Status
 
-**Step A1, access tokens** (DESIGN.md §10), after S1, storages. Storages are
-created with Drush, and each has a root container. Over HTTP:
+**Step S2, data resources** (DESIGN.md §10), after S1, storages, and A1, access
+tokens. Storages are created with Drush; everything in them is managed over HTTP
+by their controllers:
 
-| URL | Response |
+| Request | Response |
 |---|---|
-| `/lws/{storage}/` | The storage description (`application/lws+cid`, or `ld+json`/`json` by `Accept`), to anyone |
-| `/lws/{storage}/root/…/` | To the storage's controllers: a container listing (`application/lws+json`, or `ld+json`/`json`), with `ETag`, `Last-Modified` and `Link` headers |
+| `GET /lws/{storage}/` | The storage description (`application/lws+cid`, or `ld+json`/`json` by `Accept`), to anyone |
+| `GET`/`HEAD` a container | A listing (`application/lws+json`, or `ld+json`/`json`) with each member's type, media type, size and modification time |
+| `GET`/`HEAD` a data resource | Its bytes, with byte ranges (`206`, `416`) |
+| `POST` to a container | `201` and `Location`: a data resource from the body, or a container with `Link: <https://www.w3.org/ns/lws#Container>; rel="type"`. The `Slug` header suggests the name |
+| `PUT` a data resource | `204`: its content replaced. There is no create-by-`PUT` |
+| `DELETE` | `204`. A container that is not empty needs `Depth: infinity` (`409` otherwise) |
+| `GET /lws/{storage}/meta/{uuid}` | The linkset of a resource (`application/linkset+json`), read-only until step S4 |
+| `If-Match`, `If-None-Match`, `If-(Un)Modified-Since` | `304` or `412` as RFC 9110 says |
 | No token, or a rejected one | `401` with a Bearer challenge: `as_uri` (the authorization server), `realm` (the storage) and, for a rejected token, `error` |
 | A valid token of anyone else | `403` |
-| An unknown storage, a missing resource | `404` |
-| A blocked storage, or one with no authorization server | `503` |
-| Anything malformed | `400` |
+| Over the storage's quota | `507` |
 
-Errors are RFC 9457 problem details. Nothing can be written over HTTP yet: data
-resources and writes come with step S2, and access for agents other than
-controllers with step A3.
+Successful responses carry `ETag` and `Link` headers (storage, type, parent,
+linkset), and errors are RFC 9457 problem details. Content is kept as managed
+files in the private file system and never served through Drupal's own file
+routes. Access for agents other than controllers comes with step A3, `PATCH` and
+writable linksets with S4.
 
 ```sh
 drush lws:as:add main https://as.example --default    # trust an authorization server
-drush lws:storage:create alice --controller=https://id.example/alice
+drush lws:storage:create alice --controller=https://id.example/alice --quota=1000000000
 drush lws:storage:list
 drush lws:storage:delete alice
+drush lws:gc                                           # sweep unreferenced content
 ```
 
 ## Access tokens
@@ -84,6 +92,8 @@ ddev add-on get ddev/ddev-drupal-contrib   # once; commit the files it adds to .
 ddev start
 ddev poser                                  # builds the Drupal codebase
 ddev symlink-project
+# Data resources need a private file system:
+echo "\$settings['file_private_path'] = '../private';" >> web/sites/default/settings.php
 ddev drush site:install minimal -y
 ddev drush en lws_storage -y
 ddev drush config:set lws.settings base_url https://lws-drupal.ddev.site -y
@@ -120,8 +130,15 @@ SIMPLETEST_DB=sqlite://localhost//tmp/lws-test.sqlite vendor/bin/phpunit -c web/
   serving LWS from the same host as the site's own pages.
 - **Trust an authorization server** and make it the default; until then, storage
   requests that need a token answer `503`, and the status report says so.
-- **Configure the private file system.** Data resources will keep their content
-  there (step S2); the status report warns until it is set.
+- **Configure the private file system.** Data resources keep their content there,
+  under `private://lws/`; until it is set they cannot be created, and the status
+  report says so. Another stream wrapper can be chosen with
+  `lws_storage.settings:scheme`.
+- **Request size.** `lws_storage.settings:max_upload_bytes` caps one upload
+  (`413`); PHP's `post_max_size` and the web server's body limit still apply to
+  `POST`.
+- **Run cron,** which deletes the files of recursively deleted resources and of
+  deleted storages.
 - **Web servers refuse some paths before Drupal sees them:**
   - Drupal's `.htaccess` answers `403` for any path segment that starts with a
     dot, such as `/lws/alice/root/.profile`. LWS never gives a resource such a

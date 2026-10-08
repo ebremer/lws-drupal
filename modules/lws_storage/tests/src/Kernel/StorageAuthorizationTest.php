@@ -286,7 +286,7 @@ final class StorageAuthorizationTest extends LwsStorageKernelTestBase {
     ]);
     $this->assertSame(204, $preflight->getStatusCode());
     $this->assertSame('*', $preflight->headers->get('Access-Control-Allow-Origin'));
-    $this->assertSame('GET, HEAD, OPTIONS', $preflight->headers->get('Access-Control-Allow-Methods'));
+    $this->assertSame('GET, HEAD, POST, OPTIONS', $preflight->headers->get('Access-Control-Allow-Methods'));
     $this->assertContains('Authorization', array_map('trim', explode(',', (string) $preflight->headers->get('Access-Control-Allow-Headers'))));
     $this->assertSame('600', $preflight->headers->get('Access-Control-Max-Age'));
   }

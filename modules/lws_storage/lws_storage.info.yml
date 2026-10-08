@@ -4,5 +4,6 @@ description: 'Serves W3C Linked Web Storage (LWS) storages: the storage descript
 package: 'Linked Web Storage'
 core_version_requirement: ^11.3
 dependencies:
+  - drupal:file
   - lws:lws
   - lws:lws_authz

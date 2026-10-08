@@ -13,6 +13,7 @@ use Drupal\Core\Field\BaseFieldDefinition;
 use Drupal\Core\StringTranslation\TranslatableMarkup;
 use Drupal\lws\Routing\LwsUrlParser;
 use Drupal\lws_storage\LwsStorageStorageSchema;
+use Drupal\lws_storage\StorageManager;
 use Drupal\views\EntityViewsData;
 
 /**
@@ -91,6 +92,21 @@ class LwsStorage extends ContentEntityBase implements LwsStorageInterface {
       ->setSetting('max_length', 64)
       ->setSetting('is_ascii', TRUE);
 
+    $fields['quota_bytes'] = BaseFieldDefinition::create('integer')
+      ->setLabel(new TranslatableMarkup('Quota'))
+      ->setDescription(new TranslatableMarkup('The most content the storage may hold, in bytes. Empty for no limit.'))
+      ->setSetting('unsigned', TRUE)
+      ->setSetting('size', 'big');
+
+    // Kept up to date with SQL expressions in the transactions that change
+    // content, so that concurrent writes are all counted.
+    $fields['used_bytes'] = BaseFieldDefinition::create('integer')
+      ->setLabel(new TranslatableMarkup('Used'))
+      ->setDescription(new TranslatableMarkup('The content the storage holds, in bytes.'))
+      ->setSetting('unsigned', TRUE)
+      ->setSetting('size', 'big')
+      ->setDefaultValue(0);
+
     $fields['status'] = BaseFieldDefinition::create('boolean')
       ->setLabel(new TranslatableMarkup('Enabled'))
       ->setDefaultValue(TRUE);
@@ -137,6 +153,21 @@ class LwsStorage extends ContentEntityBase implements LwsStorageInterface {
   /**
    * {@inheritdoc}
    */
+  public function getQuotaBytes(): ?int {
+    $quota = $this->get('quota_bytes')->value;
+    return $quota === NULL || $quota === '' ? NULL : (int) $quota;
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function getUsedBytes(): int {
+    return (int) $this->get('used_bytes')->value;
+  }
+
+  /**
+   * {@inheritdoc}
+   */
   public function isEnabled(): bool {
     return (bool) $this->get('status')->value;
   }
@@ -144,15 +175,24 @@ class LwsStorage extends ContentEntityBase implements LwsStorageInterface {
   /**
    * {@inheritdoc}
    *
-   * Deletes the storage's resources with it.
+   * Deletes the storage's resources with it, and queues their files for
+   * deletion.
    */
   public static function preDelete(EntityStorageInterface $storage, array $entities): void {
     parent::preDelete($storage, $entities);
     $resources = \Drupal::entityTypeManager()->getStorage('lws_resource');
+    $queue = \Drupal::queue(StorageManager::GC_QUEUE);
     foreach ($entities as $entity) {
       $ids = $resources->getQuery()->accessCheck(FALSE)->condition('storage', $entity->id())->execute();
       foreach (array_chunk($ids, 100) as $chunk) {
-        $resources->delete($resources->loadMultiple($chunk));
+        $loaded = $resources->loadMultiple($chunk);
+        foreach ($loaded as $resource) {
+          $fid = $resource instanceof LwsResourceInterface ? $resource->getContentFile()?->id() : NULL;
+          if ($fid !== NULL) {
+            $queue->createItem(['fid' => (int) $fid]);
+          }
+        }
+        $resources->delete($loaded);
       }
     }
   }

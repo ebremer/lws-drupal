@@ -2,7 +2,9 @@
 # supplies $lws_target and the storage slug, which the lws_storage parameter
 # converter turns into the storage entity (404 if there is none, 503 if it is
 # blocked). Access is the "_lws_access" check (LwsAccessCheck), after the
-# lws_bearer provider of lws_authz has validated any access token.
+# lws_bearer provider of lws_authz has validated any access token. Methods the
+# shape of the URL does not allow, such as PUT on a container, were already
+# refused with 405 by LwsRequestSubscriber.
 
 lws_storage.description:
   path: '/_lws/description'
@@ -25,6 +27,67 @@ lws_storage.resource:
   path: '/_lws/resource'
   defaults:
     _controller: '\Drupal\lws_storage\Controller\ResourceController::read'
+  methods: [GET, HEAD]
+  requirements:
+    _lws_access: 'resource'
+  options:
+    _lws: TRUE
+    _auth: ['lws_bearer']
+    no_cache: TRUE
+    parameters:
+      lws_storage:
+        type: lws_storage
+
+lws_storage.resource.create:
+  path: '/_lws/resource'
+  defaults:
+    _controller: '\Drupal\lws_storage\Controller\ResourceController::post'
+  methods: [POST]
+  requirements:
+    _lws_access: 'resource'
+  options:
+    _lws: TRUE
+    _auth: ['lws_bearer']
+    no_cache: TRUE
+    parameters:
+      lws_storage:
+        type: lws_storage
+
+lws_storage.resource.replace:
+  path: '/_lws/resource'
+  defaults:
+    _controller: '\Drupal\lws_storage\Controller\ResourceController::put'
+  methods: [PUT]
+  requirements:
+    _lws_access: 'resource'
+  options:
+    _lws: TRUE
+    _auth: ['lws_bearer']
+    no_cache: TRUE
+    parameters:
+      lws_storage:
+        type: lws_storage
+
+lws_storage.resource.delete:
+  path: '/_lws/resource'
+  defaults:
+    _controller: '\Drupal\lws_storage\Controller\ResourceController::delete'
+  methods: [DELETE]
+  requirements:
+    _lws_access: 'resource'
+  options:
+    _lws: TRUE
+    _auth: ['lws_bearer']
+    no_cache: TRUE
+    parameters:
+      lws_storage:
+        type: lws_storage
+
+# The linkset of a resource: read-only until step S4.
+lws_storage.linkset:
+  path: '/_lws/meta'
+  defaults:
+    _controller: '\Drupal\lws_storage\Controller\LinksetController::read'
   methods: [GET, HEAD]
   requirements:
     _lws_access: 'resource'

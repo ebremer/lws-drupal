@@ -13,9 +13,9 @@ use Drupal\lws\Access\ResourceContext;
 use Drupal\lws\Agent\Authentication;
 use Drupal\lws\Routing\LwsArea;
 use Drupal\lws\Routing\LwsTarget;
-use Drupal\lws\Routing\LwsUrlGenerator;
 use Drupal\lws_storage\Entity\LwsStorageInterface;
-use Drupal\lws_storage\StorageRegistry;
+use Drupal\lws_storage\ResourceLinks;
+use Drupal\lws_storage\ResourceRepository;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\Routing\Route;
 
@@ -25,7 +25,8 @@ use Symfony\Component\Routing\Route;
  * - "public": anyone, such as the storage description, which clients read
  *   before they have a token;
  * - "resource": as the policy decision point decides for the agent, the
- *   method's action and the target resource.
+ *   method's action and the target resource. POST is checked as Create on
+ *   the target container. A linkset is checked as its resource.
  *
  * Either way a request whose token was rejected is refused, even where no
  * token is needed (LWS Core §5.2.4.2). Refusals become 401 or 403 in
@@ -38,8 +39,8 @@ final class LwsAccessCheck implements AccessInterface {
 
   public function __construct(
     private readonly AccessDecisionInterface $decisions,
-    private readonly StorageRegistry $storages,
-    private readonly LwsUrlGenerator $urls,
+    private readonly ResourceLinks $links,
+    private readonly ResourceRepository $resources,
   ) {}
 
   /**
@@ -58,28 +59,29 @@ final class LwsAccessCheck implements AccessInterface {
     $storage = $request->attributes->get('lws_storage');
     $target = $request->attributes->get('lws_target');
     $action = Action::forMethod($request->getMethod());
-    if ($requirement !== 'resource' || !$storage instanceof LwsStorageInterface || !$target instanceof LwsTarget || $target->area !== LwsArea::Resource || $action === NULL) {
+    $context = $storage instanceof LwsStorageInterface && $target instanceof LwsTarget ? $this->context($storage, $target) : NULL;
+    if ($requirement !== 'resource' || $context === NULL || $action === NULL) {
       return self::result(FALSE, 'The route has no LWS access requirement this check understands.');
     }
-    $decision = $this->decisions->decide($authentication->agent, $action, $this->context($storage, $target));
-    return self::result($decision->isPermitted());
+    return self::result($this->decisions->decide($authentication->agent, $action, $context)->isPermitted());
   }
 
   /**
-   * What the policy decision point knows about the target resource.
+   * What the policy decision point knows about the target.
    */
-  private function context(LwsStorageInterface $storage, LwsTarget $target): ResourceContext {
-    $slug = $storage->getSlug();
-    $ancestors = [];
-    for ($i = 1; $i < count($target->segments); $i++) {
-      $ancestors[] = $this->urls->resourceUri($slug, array_slice($target->segments, 0, $i), TRUE);
+  private function context(LwsStorageInterface $storage, LwsTarget $target): ?ResourceContext {
+    if ($target->area === LwsArea::Resource) {
+      return $this->links->context($storage, $target->segments, $target->container);
     }
-    return new ResourceContext(
-      $this->storages->ref($storage),
-      $this->urls->resourceUri($slug, $target->segments, $target->container),
-      $ancestors,
-      $target->container,
-    );
+    if ($target->area === LwsArea::Meta) {
+      $resource = $this->resources->findByUuid($storage, (string) $target->metaId);
+      // A missing linkset is judged as the storage root: those who may read
+      // that learn it is missing, and nobody else.
+      return $resource === NULL
+        ? $this->links->context($storage, ['root'], TRUE)
+        : $this->links->contextOf($storage, $resource);
+    }
+    return NULL;
   }
 
   /**

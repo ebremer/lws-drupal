@@ -1,0 +1,5 @@
+services:
+  lws_storage_test.file_validation_subscriber:
+    class: Drupal\lws_storage_test\EventSubscriber\RejectingValidator
+    tags:
+      - { name: event_subscriber }
