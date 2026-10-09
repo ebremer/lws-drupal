@@ -18,6 +18,7 @@ use Drupal\file\FileInterface;
 use Drupal\file\FileUsage\FileUsageInterface;
 use Drupal\file\Validation\FileValidatorInterface;
 use Drupal\lws\Agent\RequestingAgent;
+use Drupal\lws\Database\TransactionConflict;
 use Drupal\lws\Http\LwsHttpException;
 use Drupal\lws\Routing\ResourceName;
 use Drupal\lws_authz\Server\LocalAuthorizationServer;
@@ -42,6 +43,13 @@ use Symfony\Contracts\EventDispatcher\EventDispatcherInterface;
  * Each change to a resource is announced with an LwsResourceEvent once its
  * transaction commits: right after it, or when the request ends if an outer
  * transaction committed it.
+ *
+ * Every transaction locks rows in one order: down the tree, a container
+ * before its members, and the storage's own row, for its quota, last. Two
+ * operations that need the same rows then wait for each other in turn,
+ * rather than each holding what the other needs. When the database still
+ * gives up on a transaction because of a concurrent one, on a deadlock or a
+ * lock it waited too long for, the operation runs again (transactional()).
  */
 final class StorageManager implements DestructableInterface {
 
@@ -49,6 +57,11 @@ final class StorageManager implements DestructableInterface {
    * The queue of files to delete once nothing uses them.
    */
   public const GC_QUEUE = 'lws_storage_gc';
+
+  /**
+   * How often an operation is tried while concurrent ones make it fail.
+   */
+  private const ATTEMPTS = 3;
 
   /**
    * The largest content a change computed from the current one may read.
@@ -258,22 +271,24 @@ final class StorageManager implements DestructableInterface {
       $this->content->delete($content->uri);
       throw $e;
     }
-    $transaction = $this->database->startTransaction();
     try {
-      $current = $this->lock($resource);
-      if ($precondition !== NULL) {
-        $precondition($current);
-      }
-      $this->swap($current, $content, $mediaType, $metadata);
+      return $this->transactional(
+        function () use ($resource, $content, $mediaType, $precondition, $metadata): LwsResourceInterface {
+          $current = $this->lock($resource);
+          if ($precondition !== NULL) {
+            $precondition($current);
+          }
+          $this->swap($current, $content, $mediaType, $metadata);
+          return $current;
+        },
+        fn () => $this->forget($resource, $resource->getParent()),
+      );
     }
     catch (\Throwable $e) {
-      $transaction->rollBack();
-      $this->forget($resource, $resource->getParent());
+      // The new bytes serve every attempt, and go only once none succeeded.
       $this->content->delete($content->uri);
       throw $e;
     }
-    $this->commit($transaction);
-    return $current;
   }
 
   /**
@@ -299,42 +314,43 @@ final class StorageManager implements DestructableInterface {
     if ($resource->isContainer()) {
       throw new \InvalidArgumentException('Only data resources have content.');
     }
+    // Each attempt makes its content from the content it finds.
+    /** @var \Drupal\lws_storage\Content\StoredContent|null $content */
     $content = NULL;
-    $transaction = $this->database->startTransaction();
-    try {
-      $current = $this->lock($resource);
-      if ($precondition !== NULL) {
-        $precondition($current);
-      }
-      if (($current->getSize() ?? 0) > self::MAX_CHANGE_BYTES) {
-        throw LwsHttpException::unprocessable('The resource is too large to patch; replace it with PUT.');
-      }
-      $uri = $current->getContentFile()?->getFileUri();
-      $bytes = $uri === NULL ? FALSE : @file_get_contents($uri);
-      if ($bytes === FALSE) {
-        throw new \RuntimeException(sprintf('The content of resource %s cannot be read.', $current->uuid()));
-      }
-      $stream = fopen('php://temp', 'w+b');
-      if ($stream === FALSE) {
-        throw new \RuntimeException('No temporary stream.');
-      }
-      fwrite($stream, $change($bytes));
-      rewind($stream);
-      $content = $this->content->write($stream, $this->storageUuid($current), (string) $current->uuid(), $this->room($current->getLwsStorageId(), (int) $current->getSize()));
-      $mediaType = $current->getMediaType() ?? 'application/octet-stream';
-      $this->validate($content, $mediaType);
-      $this->swap($current, $content, $mediaType, $metadata === NULL ? NULL : $current->getUserMetadata()->with($metadata));
-    }
-    catch (\Throwable $e) {
-      $transaction->rollBack();
-      $this->forget($resource, $resource->getParent());
-      if ($content !== NULL) {
-        $this->content->delete($content->uri);
-      }
-      throw $e;
-    }
-    $this->commit($transaction);
-    return $current;
+    return $this->transactional(
+      function () use ($resource, $change, $precondition, $metadata, &$content): LwsResourceInterface {
+        $current = $this->lock($resource);
+        if ($precondition !== NULL) {
+          $precondition($current);
+        }
+        if (($current->getSize() ?? 0) > self::MAX_CHANGE_BYTES) {
+          throw LwsHttpException::unprocessable('The resource is too large to patch; replace it with PUT.');
+        }
+        $uri = $current->getContentFile()?->getFileUri();
+        $bytes = $uri === NULL ? FALSE : @file_get_contents($uri);
+        if ($bytes === FALSE) {
+          throw new \RuntimeException(sprintf('The content of resource %s cannot be read.', $current->uuid()));
+        }
+        $stream = fopen('php://temp', 'w+b');
+        if ($stream === FALSE) {
+          throw new \RuntimeException('No temporary stream.');
+        }
+        fwrite($stream, $change($bytes));
+        rewind($stream);
+        $content = $this->content->write($stream, $this->storageUuid($current), (string) $current->uuid(), $this->room($current->getLwsStorageId(), (int) $current->getSize()));
+        $mediaType = $current->getMediaType() ?? 'application/octet-stream';
+        $this->validate($content, $mediaType);
+        $this->swap($current, $content, $mediaType, $metadata === NULL ? NULL : $current->getUserMetadata()->with($metadata));
+        return $current;
+      },
+      function () use ($resource, &$content): void {
+        $this->forget($resource, $resource->getParent());
+        if ($content !== NULL) {
+          $this->content->delete($content->uri);
+          $content = NULL;
+        }
+      },
+    );
   }
 
   /**
@@ -351,36 +367,34 @@ final class StorageManager implements DestructableInterface {
    *   The resource with its new links.
    */
   public function changeMetadata(LwsResourceInterface $resource, \Closure $change, ?callable $precondition = NULL): LwsResourceInterface {
-    $transaction = $this->database->startTransaction();
-    try {
-      $current = $this->lock($resource);
-      if ($precondition !== NULL) {
-        $precondition($current);
-      }
-      $current->setUserMetadata($change($current), $this->time->getRequestTime());
-      $current->save();
-      // Listings show members' types.
-      $parent = $current->getParent();
-      if ($parent !== NULL) {
-        $this->resources->touch($parent);
-      }
-      $this->announce(LwsResourceEvent::METADATA_UPDATED, [$current]);
-    }
-    catch (\Throwable $e) {
-      $transaction->rollBack();
-      $this->forget($resource, $resource->getParent());
-      throw $e;
-    }
-    $this->commit($transaction);
-    return $current;
+    return $this->transactional(
+      function () use ($resource, $change, $precondition): LwsResourceInterface {
+        $current = $this->lock($resource);
+        if ($precondition !== NULL) {
+          $precondition($current);
+        }
+        $current->setUserMetadata($change($current), $this->time->getRequestTime());
+        $current->save();
+        // Listings show members' types.
+        $parent = $current->getParent();
+        if ($parent !== NULL) {
+          $this->resources->touch($parent);
+        }
+        $this->announce(LwsResourceEvent::METADATA_UPDATED, [$current]);
+        return $current;
+      },
+      fn () => $this->forget($resource, $resource->getParent()),
+    );
   }
 
   /**
    * Points a locked data resource at new content, inside the transaction.
+   *
+   * Its container is locked already (lock()), and the storage's row, for the
+   * quota, is locked last.
    */
   private function swap(LwsResourceInterface $current, StoredContent $content, string $mediaType, ?UserMetadata $metadata): void {
     $previous = $current->getContentFile();
-    $this->charge($current->getLwsStorageId(), $content->size - ($previous?->getSize() ?? 0));
     $file = $this->newFile($content, $current->getName(), $mediaType);
     $current->set('content', $file->id());
     $current->set('content_sha256', $content->sha256);
@@ -396,9 +410,15 @@ final class StorageManager implements DestructableInterface {
     }
     if ($previous !== NULL) {
       $fid = (int) $previous->id();
-      $this->database->transactionManager()->addPostTransactionCallback(fn () => $this->releaseFile($fid));
+      // Only once the resource no longer refers to it: rolled back, it does.
+      $this->database->transactionManager()->addPostTransactionCallback(function (bool $committed) use ($fid): void {
+        if ($committed) {
+          $this->releaseFile($fid);
+        }
+      });
     }
     $this->announce(LwsResourceEvent::UPDATED, [$current]);
+    $this->charge($current->getLwsStorageId(), $content->size - ($previous?->getSize() ?? 0));
   }
 
   /**
@@ -425,71 +445,71 @@ final class StorageManager implements DestructableInterface {
     if ($resource->isRoot()) {
       throw new \InvalidArgumentException('The storage root cannot be deleted.');
     }
-    $transaction = $this->database->startTransaction();
-    try {
-      $current = $this->lock($resource);
-      if ($precondition !== NULL) {
-        $precondition($current);
-      }
-      $members = [];
-      if ($current->isContainer() && $this->resources->hasMembers($current)) {
-        if (!$recursive) {
-          throw LwsHttpException::conflict('The container is not empty. Send "Depth: infinity" to delete it with its members.');
+    $this->transactional(
+      function () use ($resource, $recursive, $precondition, $mayDelete): void {
+        $current = $this->lock($resource);
+        if ($precondition !== NULL) {
+          $precondition($current);
         }
-        // Counted before anything is loaded or locked, and checked again
-        // once it is. The count is not told: the agent may not see them all.
-        $limit = (int) $this->configFactory->get('lws_storage.settings')->get('max_recursive_delete');
-        $tooMany = LwsHttpException::unprocessable(sprintf('The container holds more resources than one request may delete (%d). Delete some of its members first.', $limit));
-        if ($limit > 0 && $this->resources->countDescendants($current, $limit + 1) > $limit) {
-          throw $tooMany;
-        }
-        $members = $this->resources->descendants($current, TRUE);
-        if ($limit > 0 && count($members) > $limit) {
-          throw $tooMany;
-        }
-      }
-      if ($mayDelete !== NULL) {
-        foreach ($members as $member) {
-          if (!$mayDelete($member)) {
-            throw new AccessDeniedHttpException('The agent may not delete every member of the container.');
+        $members = [];
+        if ($current->isContainer() && $this->resources->hasMembers($current)) {
+          if (!$recursive) {
+            throw LwsHttpException::conflict('The container is not empty. Send "Depth: infinity" to delete it with its members.');
+          }
+          // Counted before anything is loaded or locked, and checked again
+          // once it is. The count is not told: the agent may not see them all.
+          $limit = (int) $this->configFactory->get('lws_storage.settings')->get('max_recursive_delete');
+          $tooMany = LwsHttpException::unprocessable(sprintf('The container holds more resources than one request may delete (%d). Delete some of its members first.', $limit));
+          if ($limit > 0 && $this->resources->countDescendants($current, $limit + 1) > $limit) {
+            throw $tooMany;
+          }
+          $members = $this->resources->descendants($current, TRUE);
+          if ($limit > 0 && count($members) > $limit) {
+            throw $tooMany;
           }
         }
-      }
+        if ($mayDelete !== NULL) {
+          foreach ($members as $member) {
+            if (!$mayDelete($member)) {
+              throw new AccessDeniedHttpException('The agent may not delete every member of the container.');
+            }
+          }
+        }
 
-      $parent = $current->getParent();
-      $deleted = [...$members, $current];
-      // Described while they still exist.
-      $this->announce(LwsResourceEvent::DELETED, $deleted);
-      $fids = [];
-      $bytes = 0;
-      foreach ($deleted as $item) {
-        $file = $item->getContentFile();
-        if ($file !== NULL) {
-          $fids[] = (int) $file->id();
-          $bytes += (int) $file->getSize();
+        $parent = $current->getParent();
+        $deleted = [...$members, $current];
+        // Described while they still exist.
+        $this->announce(LwsResourceEvent::DELETED, $deleted);
+        $fids = [];
+        $bytes = 0;
+        foreach ($deleted as $item) {
+          $file = $item->getContentFile();
+          if ($file !== NULL) {
+            $fids[] = (int) $file->id();
+            $bytes += (int) $file->getSize();
+          }
         }
-      }
-      foreach (array_chunk($deleted, 100) as $chunk) {
-        $this->entityTypeManager->getStorage('lws_resource')->delete($chunk);
-      }
-      if ($parent !== NULL) {
-        $this->resources->touch($parent);
-      }
-      $this->charge($current->getLwsStorageId(), -$bytes);
-      $this->database->transactionManager()->addPostTransactionCallback(function () use ($fids, $recursive): void {
-        foreach ($fids as $fid) {
-          // Recursive deletes leave their files to the queue, so the request
-          // does not wait for every file to be deleted.
-          $recursive ? $this->queueFactory->get(self::GC_QUEUE)->createItem(['fid' => $fid]) : $this->releaseFile($fid);
+        foreach (array_chunk($deleted, 100) as $chunk) {
+          $this->entityTypeManager->getStorage('lws_resource')->delete($chunk);
         }
-      });
-    }
-    catch (\Throwable $e) {
-      $transaction->rollBack();
-      $this->forget($resource, $resource->getParent());
-      throw $e;
-    }
-    $this->commit($transaction);
+        if ($parent !== NULL) {
+          $this->resources->touch($parent);
+        }
+        $this->charge($current->getLwsStorageId(), -$bytes);
+        $this->database->transactionManager()->addPostTransactionCallback(function (bool $committed) use ($fids, $recursive): void {
+          // Rolled back, the resources still refer to their files.
+          if (!$committed) {
+            return;
+          }
+          foreach ($fids as $fid) {
+            // Recursive deletes leave their files to the queue, so the request
+            // does not wait for every file to be deleted.
+            $recursive ? $this->queueFactory->get(self::GC_QUEUE)->createItem(['fid' => $fid]) : $this->releaseFile($fid);
+          }
+        });
+      },
+      fn () => $this->forget($resource, $resource->getParent()),
+    );
   }
 
   /**
@@ -515,42 +535,41 @@ final class StorageManager implements DestructableInterface {
     if (mb_strlen($parent->getPath() . $name) > LwsResourceInterface::MAX_PATH_LENGTH) {
       throw LwsHttpException::badRequest(sprintf('The resource would be nested too deeply: its path would be longer than %d characters.', LwsResourceInterface::MAX_PATH_LENGTH));
     }
-    $transaction = $this->database->startTransaction();
-    try {
-      // Update the parent first, which locks it: if a recursive delete
-      // removed it meanwhile, nothing is updated and the create fails rather
-      // than leave an orphan.
-      if (!$this->resources->touch($parent)) {
-        throw LwsHttpException::notFound('The container no longer exists.');
-      }
-      $values = [
-        'uuid' => $uuid,
-        'storage' => $parent->getLwsStorageId(),
-        'parent' => $parent->id(),
-        'name' => $name,
-        'creator' => $agent?->subject,
-        'creator_client' => $agent?->client,
-      ];
-      if ($content !== NULL) {
-        $this->charge($parent->getLwsStorageId(), $content->size);
-        $values['content'] = $this->newFile($content, $name, $mediaType)->id();
-        $values['content_sha256'] = $content->sha256;
-      }
-      $resource = $this->entityTypeManager->getStorage('lws_resource')->create($values);
-      assert($resource instanceof LwsResourceInterface);
-      if ($metadata !== NULL && !$metadata->isEmpty()) {
-        $resource->setUserMetadata($metadata, $this->time->getRequestTime());
-      }
-      $resource->save();
-      $this->announce(LwsResourceEvent::CREATED, [$resource]);
-    }
-    catch (\Throwable $e) {
-      $transaction->rollBack();
-      $this->forget($parent);
-      throw $e;
-    }
-    $this->commit($transaction);
-    return $resource;
+    return $this->transactional(
+      function () use ($parent, $name, $uuid, $content, $mediaType, $agent, $metadata): LwsResourceInterface {
+        // Update the parent first, which locks it: if a recursive delete
+        // removed it meanwhile, nothing is updated and the create fails rather
+        // than leave an orphan.
+        if (!$this->resources->touch($parent)) {
+          throw LwsHttpException::notFound('The container no longer exists.');
+        }
+        $values = [
+          'uuid' => $uuid,
+          'storage' => $parent->getLwsStorageId(),
+          'parent' => $parent->id(),
+          'name' => $name,
+          'creator' => $agent?->subject,
+          'creator_client' => $agent?->client,
+        ];
+        if ($content !== NULL) {
+          $values['content'] = $this->newFile($content, $name, $mediaType)->id();
+          $values['content_sha256'] = $content->sha256;
+        }
+        $resource = $this->entityTypeManager->getStorage('lws_resource')->create($values);
+        assert($resource instanceof LwsResourceInterface);
+        if ($metadata !== NULL && !$metadata->isEmpty()) {
+          $resource->setUserMetadata($metadata, $this->time->getRequestTime());
+        }
+        $resource->save();
+        $this->announce(LwsResourceEvent::CREATED, [$resource]);
+        if ($content !== NULL) {
+          // The storage's row is locked last.
+          $this->charge($parent->getLwsStorageId(), $content->size);
+        }
+        return $resource;
+      },
+      fn () => $this->forget($parent),
+    );
   }
 
   /**
@@ -577,6 +596,54 @@ final class StorageManager implements DestructableInterface {
    */
   public function destruct(): void {
     $this->dispatchCommitted();
+  }
+
+  /**
+   * Runs an operation's database work in a transaction.
+   *
+   * When the database gives up on the transaction because of a concurrent
+   * one, a deadlock or a lock it waited too long for, the work runs again in
+   * a new one, up to ATTEMPTS times in all; then the conflict is thrown, which
+   * the LWS URL space answers with 503 (LwsExceptionSubscriber). Inside an
+   * outer transaction the work runs once: the database rolled back all of the
+   * outer one, which only its owner can try again.
+   *
+   * @param \Closure(): T $work
+   *   The work. It may run more than once, so it reads what it needs anew.
+   * @param \Closure(): void $rolledBack
+   *   Undoes what an attempt did outside the database, such as caching or
+   *   writing content, after its transaction rolled back.
+   *
+   * @return T
+   *   What the work returns.
+   *
+   * @template T
+   */
+  private function transactional(\Closure $work, \Closure $rolledBack): mixed {
+    $attempts = $this->database->inTransaction() ? 1 : self::ATTEMPTS;
+    for ($attempt = 1;; $attempt++) {
+      $transaction = $this->database->startTransaction();
+      try {
+        $result = $work();
+      }
+      catch (\Throwable $e) {
+        $transaction->rollBack();
+        // Released before the next attempt starts its transaction: core ends
+        // a rolled-back root transaction, and runs its post-transaction
+        // callbacks, only when the object goes.
+        unset($transaction);
+        $rolledBack();
+        if ($attempt < $attempts && TransactionConflict::is($e)) {
+          // A short, random wait, so that two that collided do not collide
+          // again at once.
+          usleep(random_int(5000, 25000) * $attempt);
+          continue;
+        }
+        throw $e;
+      }
+      $this->commit($transaction);
+      return $result;
+    }
   }
 
   /**
@@ -646,22 +713,40 @@ final class StorageManager implements DestructableInterface {
   }
 
   /**
-   * Locks a resource's row and loads it as it is now.
+   * Locks a resource's row, after its container's, and loads it as it is now.
+   *
+   * The container is locked first, as a create in it locks it (insert()), so
+   * that a change and a create in one container do not each hold a row the
+   * other waits for.
    *
    * @throws \Drupal\lws\Http\LwsHttpException
    *   404 if it no longer exists.
    */
   private function lock(LwsResourceInterface $resource): LwsResourceInterface {
-    $query = $this->database->select('lws_resource', 'r')
-      ->fields('r', ['id'])
-      ->condition('id', $resource->id());
-    $query->forUpdate();
-    $locked = $query->execute()?->fetchField();
-    $current = $locked === FALSE || $locked === NULL ? NULL : $this->entityTypeManager->getStorage('lws_resource')->loadUnchanged((int) $resource->id());
+    $parent = (int) $resource->get('parent')->target_id;
+    if ($parent > 0) {
+      $this->lockRow($parent);
+    }
+    $current = $this->lockRow((int) $resource->id()) ? $this->entityTypeManager->getStorage('lws_resource')->loadUnchanged((int) $resource->id()) : NULL;
     if (!$current instanceof LwsResourceInterface) {
       throw LwsHttpException::notFound();
     }
     return $current;
+  }
+
+  /**
+   * Locks a resource's row until the transaction ends.
+   *
+   * @return bool
+   *   FALSE if there is no such row.
+   */
+  private function lockRow(int $id): bool {
+    $query = $this->database->select('lws_resource', 'r')
+      ->fields('r', ['id'])
+      ->condition('id', $id);
+    $query->forUpdate();
+    $locked = $query->execute()?->fetchField();
+    return $locked !== FALSE && $locked !== NULL;
   }
 
   /**

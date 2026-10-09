@@ -7,6 +7,7 @@ namespace Drupal\Tests\lws_storage\Kernel;
 use Drupal\Core\Form\FormState;
 use Drupal\lws_authz\AccessService\AccessRecordEvent;
 use Drupal\lws_authz\Entity\LwsAccessRecordInterface;
+use Drupal\lws_authz\Entity\LwsPolicyInterface;
 use Drupal\lws_storage\Form\AccessRequestForm;
 use Drupal\lws_storage\Form\PolicyDeleteForm;
 use PHPUnit\Framework\Attributes\Group;
@@ -204,6 +205,24 @@ final class AccessServiceTest extends LwsStorageKernelTestBase {
       [AccessRecordEvent::CREATED, 'grant', $grant],
       [AccessRecordEvent::DELETED, 'grant', $grant],
     ], $this->events);
+  }
+
+  /**
+   * Tests a grant that ends after 2038, beyond a 32-bit integer.
+   *
+   * MySQL and MariaDB refused its policy for a not_after out of range.
+   */
+  public function testGrantEndingAfter2038(): void {
+    $until = ['leftOperand' => 'dateTime', 'operator' => 'lteq', 'rightOperand' => '2999-12-31T23:59:59Z'];
+    $response = $this->as(self::ALICE, 'POST', self::GRANTS, self::document('AccessGrant', self::BOB, [$until]));
+    $this->assertSame(201, $response->getStatusCode(), (string) $response->getContent());
+    $this->assertSame(200, $this->as(self::BOB, 'GET', self::SHARED . 'a.txt')->getStatusCode());
+    $policies = $this->container->get('entity_type.manager')->getStorage('lws_policy')->loadMultiple();
+    $this->assertCount(1, $policies);
+    $policy = reset($policies);
+    $this->assertInstanceOf(LwsPolicyInterface::class, $policy);
+    // 2999-12-31T23:59:59Z.
+    $this->assertSame(32503679999, $policy->getNotAfter());
   }
 
   /**

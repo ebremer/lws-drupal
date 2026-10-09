@@ -18,6 +18,11 @@ use Drupal\lws_storage\Entity\LwsStorageInterface;
  */
 final class ResourceRepository {
 
+  /**
+   * The most containers whose members one query reads, walking down a tree.
+   */
+  private const PARENTS_PER_QUERY = 500;
+
   public function __construct(
     private readonly EntityTypeManagerInterface $entityTypeManager,
     private readonly Connection $database,
@@ -229,6 +234,13 @@ final class ResourceRepository {
   /**
    * The paths of the resources below a container, by ID.
    *
+   * The tree is walked one level at a time, through each resource's parent,
+   * which is indexed: only the container's own descendants are read, and with
+   * $lock, locked, each container before its members, as every write locks
+   * them (StorageManager::lock()). Matching paths by prefix read every
+   * resource of the storage instead, and with FOR UPDATE locked them all, so
+   * that two recursive deletes in one storage deadlocked on MySQL.
+   *
    * @param \Drupal\lws_storage\Entity\LwsResourceInterface $container
    *   The container.
    * @param bool $lock
@@ -237,27 +249,36 @@ final class ResourceRepository {
    *   Stop after this many rows; NULL for all.
    *
    * @return array<int, string>
-   *   The paths.
+   *   The paths, those nearer the container first.
    */
   private function descendantPaths(LwsResourceInterface $container, bool $lock, ?int $cap = NULL): array {
-    $prefix = $container->getPath();
-    $query = $this->database->select('lws_resource', 'r')
-      ->fields('r', ['id', 'path'])
-      ->condition('storage', $container->getLwsStorageId())
-      ->condition('path', $this->database->escapeLike($prefix) . '_%', 'LIKE');
-    if ($cap !== NULL) {
-      $query->range(0, $cap);
-    }
-    if ($lock) {
-      $query->forUpdate();
-    }
     $paths = [];
-    foreach ($query->execute() ?? [] as $row) {
-      // LIKE may ignore case; paths are case-sensitive. Rows that differ in
-      // case may make a capped count too low, never too high.
-      if (str_starts_with((string) $row->path, $prefix)) {
-        $paths[(int) $row->id] = (string) $row->path;
+    $level = [(int) $container->id()];
+    while ($level !== []) {
+      $next = [];
+      foreach (array_chunk($level, self::PARENTS_PER_QUERY) as $parents) {
+        $query = $this->database->select('lws_resource', 'r')
+          ->fields('r', ['id', 'path'])
+          ->condition('parent', $parents, 'IN')
+          ->orderBy('id');
+        if ($cap !== NULL) {
+          $query->range(0, $cap - count($paths));
+        }
+        if ($lock) {
+          $query->forUpdate();
+        }
+        foreach ($query->execute() ?? [] as $row) {
+          $path = (string) $row->path;
+          $paths[(int) $row->id] = $path;
+          if (str_ends_with($path, '/')) {
+            $next[] = (int) $row->id;
+          }
+        }
+        if ($cap !== NULL && count($paths) >= $cap) {
+          return $paths;
+        }
       }
+      $level = $next;
     }
     return $paths;
   }

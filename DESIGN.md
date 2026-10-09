@@ -367,7 +367,7 @@ Every write is one database transaction. The table maps each operation to its HT
 | **Replace** `PUT` | Data resources only. Replaces bytes and media type. Missing resource → `404` (§9.4: there is no PUT-to-create); container → `405`. `204` on success. With `Prefer: set-linkset` and `Link` headers, also replaces the user-managed links atomically and answers `Preference-Applied: set-linkset` |
 | **Patch** `PATCH` | `application/json-patch+json` (RFC 6902) on JSON resources (`application/json` and `*/*+json`). Optional `application/merge-patch+json`. Non-JSON resource or other patch format → `415` with `Accept-Patch`. Malformed patch → `400`; failed `test` or missing path → `409`; result not valid JSON for the media type → `422`. `Prefer: set-linkset` works as for `PUT` |
 | **Delete** `DELETE` | `204`. Removes the resource, its linkset and its parent's membership atomically (§9.5). A non-empty container without `Depth: infinity` → `409`; any other `Depth` value → `400`. Recursive delete is allowed only if the agent may delete *every* descendant, otherwise `403` and nothing is removed. The root cannot be deleted (`405`) |
-| **Write preconditions** | `If-Match`, `If-None-Match`, `If-Unmodified-Since` → `412`, evaluated in RFC 9110 §13.2.2 order *inside* the transaction against a row locked with `SELECT … FOR UPDATE`. Optional per-storage `require_if_match` → `428` (off by default; see [§12](#12-spec-interpretation-decisions)) |
+| **Write preconditions** | `If-Match`, `If-None-Match`, `If-Unmodified-Since` → `412`, evaluated in RFC 9110 §13.2.2 order *inside* the transaction against a row locked with `SELECT … FOR UPDATE`, after its container's (every write locks down the tree, and the storage's quota row last). Optional per-storage `require_if_match` → `428` (off by default; see [§12](#12-spec-interpretation-decisions)) |
 | **Linkset** `GET/HEAD meta/{uuid}` | `application/linkset+json`, `{"linkset":[{"anchor":"<resource URI>", …}]}`. Includes the server-managed `up` and `type` and the user relations. `ETag`; `Allow: GET, HEAD, PUT, PATCH, OPTIONS`; `Accept-Patch: application/json-patch+json, application/merge-patch+json` (§9.1) |
 | **Linkset** `PATCH` / `PUT` | A JSON Patch applies to the **document a GET returns** (`/linkset/0/license`), not to the storage form. The result must still be a linkset for the same anchor (`422` otherwise). Changes to server-managed relations (`up`, `linkset`, `lws#storage`, the LWS class `type`s) → `409`. `412` on a failed precondition (§9.4). The linkset is deleted with its resource |
 | **`OPTIONS`** | `204` with `Allow` and `Accept-Patch` for that resource kind. Unauthenticated, as CORS preflight requires, so it is answered from the shape of the URL alone: it never reveals whether a resource exists |
@@ -777,7 +777,7 @@ policy model, so an access grant (§11) maps 1:1 to stored policy, with no trans
 | `target_type` | `lws#StorageResource`, `lws#Container` or `lws#DataResource` |
 | `target_values` | Resource URIs, multiple, required ([§12](#12-spec-interpretation-decisions)) |
 | `constraints` | JSON list of `{leftOperand, operator, rightOperand}` |
-| `not_after` | Derived from `dateTime` `lteq`/`lt`. Lets cron purge expired policies; evaluation never relies on it |
+| `not_after` | Derived from `dateTime` `lteq`/`lt`. Lets cron purge expired policies; evaluation never relies on it. A big integer: it may lie past 2038 |
 
 **Evaluation** (`PolicyEvaluator::decide`):
 
@@ -1632,6 +1632,40 @@ with no adapters.
   - Touchstone `core`: 117 passed, 0 failed, 6 inapplicable, as before;
   - only on SQLite. The new queries (correlated `EXISTS`, `DISTINCT` ordered by an alias, `LIKE`
     on path prefixes) wait for the database CI.
+
+**After S7: MySQL and MariaDB.** The first deployment on MariaDB (11.8, `READ COMMITTED`) failed
+18 MUST tests that SQLite passes, under Touchstone's 16 tests at once: 15 ended `cantTell` because
+creating their containers answered `500`, and three failed. A copy of the dev site on MariaDB
+did the same (12 `cantTell`, 31 deadlocks logged). Two causes, both fixed:
+
+- **Deadlocks (error 1213).**
+  - A recursive delete locked its descendants with `path LIKE 'prefix%' … FOR UPDATE`. `path`
+    has no index, so the query read, and locked, every resource of the storage: two recursive
+    deletes waited for each other, and a create holding its container waited for them.
+    `ResourceRepository::descendantPaths()` now walks the tree through `parent`, one level at a
+    time, so it reads and locks the subtree alone.
+  - Writes locked rows in different orders: a create its container, then the storage's quota
+    row; a replace the resource, the quota row, then the container. Every write now locks down
+    the tree, a container before its members (`StorageManager::lock()` locks the container
+    first), and the quota row last (`charge()` moved to the end of `insert()` and `swap()`).
+  - When the database still gives up on a transaction (1213, 1205, or PostgreSQL's 40001 and
+    40P01, `TransactionConflict`), the operation runs again, up to three times in all
+    (`StorageManager::transactional()`), but only when its transaction is the outermost; then
+    the LWS URL space answers `503` with `Retry-After: 1` rather than `500`.
+  - The callbacks that release a former version's file, after a replace or a delete, now run only
+    once the transaction committed: core calls them after a rollback too, when the resource still
+    refers to the file.
+- **Times past 2038 (error 1264).** A policy's `not_after` and a subscription's `expires` were
+  core `timestamp` columns, 32-bit integers on MySQL; a grant valid until 2999 was refused. Both
+  are big integers now (the storage schema handlers), and `lws_authz_update_11004` and
+  `lws_notify_update_11001` change the columns of existing sites (`SchemaUpdates`).
+- **Verified:**
+  - 653 tests pass on SQLite and on MariaDB 11.8; phpcs and phpstan (level 8) are clean. The new
+    ones force a deadlock through a precondition (`ConcurrencyTest`), and take a column through
+    the update (`LargeTimesTest`);
+  - Touchstone against the MariaDB copy of the dev site, 16 tests at once: before, 181 passed,
+    4 failed, 12 `cantTell`; after, 195 passed, 2 failed (the advisory index tests above),
+    0 `cantTell`, and InnoDB counted no deadlock in three runs.
 
 **S8.** This is `lws_projection`, optional ([§7](#7-optional-modules)).
 

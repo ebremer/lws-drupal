@@ -2,11 +2,12 @@
 
 /**
  * @file
- * Install and uninstall functions for LWS Notifications.
+ * Install, update and uninstall functions for LWS Notifications.
  */
 
 declare(strict_types=1);
 
+use Drupal\lws\Database\SchemaUpdates;
 use Drupal\lws_notify\Delivery\Deliverer;
 
 /**
@@ -17,4 +18,15 @@ use Drupal\lws_notify\Delivery\Deliverer;
  */
 function lws_notify_uninstall(): void {
   \Drupal::queue(Deliverer::QUEUE)->deleteQueue();
+}
+
+/**
+ * Lets subscriptions expire after 2038: "expires" becomes a big integer.
+ *
+ * Without a longest lifetime, MySQL and MariaDB refused a subscription that
+ * asked to expire after 2038-01-19 for an integer out of range.
+ */
+function lws_notify_update_11001(): string {
+  $widened = SchemaUpdates::widenToBigInteger(\Drupal::database(), \Drupal::keyValue('entity.storage_schema.sql'), 'lws_subscription', 'lws_subscription', 'expires');
+  return $widened ? 'Subscriptions may now expire after 2038.' : 'Subscriptions could already expire after 2038.';
 }

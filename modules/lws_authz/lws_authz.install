@@ -7,6 +7,8 @@
 
 declare(strict_types=1);
 
+use Drupal\lws\Database\SchemaUpdates;
+
 /**
  * Adds the access policy entity type (step A3).
  */
@@ -46,4 +48,15 @@ function lws_authz_update_11003(): string {
   }
   $settings->set('openid', ['discovery' => TRUE, 'require_as_audience' => TRUE])->save();
   return 'Added the settings of the OpenID Connect suite. Enable it in the authorization settings to accept ID Tokens.';
+}
+
+/**
+ * Lets access policies end after 2038: not_after becomes a big integer.
+ *
+ * MySQL and MariaDB refused a grant whose dateTime constraint ends after
+ * 2038-01-19 for an integer out of range.
+ */
+function lws_authz_update_11004(): string {
+  $widened = SchemaUpdates::widenToBigInteger(\Drupal::database(), \Drupal::keyValue('entity.storage_schema.sql'), 'lws_policy', 'lws_policy', 'not_after');
+  return $widened ? 'Access policies may now end after 2038.' : 'Access policies could already end after 2038.';
 }

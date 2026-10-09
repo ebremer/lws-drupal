@@ -8,6 +8,7 @@ use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\ParamConverter\ParamNotConvertedException;
 use Drupal\Core\Utility\Error;
 use Drupal\lws\Agent\Authentication;
+use Drupal\lws\Database\TransactionConflict;
 use Drupal\lws\Http\BearerChallenge;
 use Drupal\lws\Http\LwsHttpException;
 use Drupal\lws\Http\ProblemResponse;
@@ -28,7 +29,9 @@ use Symfony\Component\HttpKernel\KernelEvents;
  * A refusal of a request without a valid token becomes a 401 with a Bearer
  * challenge naming the storage as the realm and its authorization server as
  * "as_uri" (LWS Core §5.2.1). A refusal of a valid token stays a 403, or
- * becomes a 404 when lws.settings:conceal_existence is set (§9.5).
+ * becomes a 404 when lws.settings:conceal_existence is set (§9.5). A change
+ * the database gave up on because of concurrent ones, a deadlock for example,
+ * is a 503 with Retry-After rather than a 500.
  */
 final class LwsExceptionSubscriber implements EventSubscriberInterface {
 
@@ -78,6 +81,14 @@ final class LwsExceptionSubscriber implements EventSubscriberInterface {
       $headers['Allow'] = implode(', ', $target->allowedMethods());
     }
     $detail = $exception instanceof LwsHttpException ? $exception->getMessage() : NULL;
+    if (TransactionConflict::is($exception)) {
+      // Concurrent changes kept this one from completing, even when it was
+      // tried again (StorageManager): nothing was changed, and the client may
+      // try again.
+      $status = 503;
+      $headers['Retry-After'] = '1';
+      $detail = 'Concurrent changes kept this one from completing; nothing was changed. Try again.';
+    }
     $authentication = Authentication::fromRequest($request);
     if (($status === 401 || $status === 403) && !$authentication->isAuthenticated() && $authentication->realm !== NULL) {
       if ($authentication->asUri === NULL) {
