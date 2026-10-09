@@ -1076,7 +1076,8 @@ only), and these parts work without its HTTP layer:
 3. **A `WebhookSigner`**, the counterpart of `WebhookVerifier`. *Written with S6,* and tested
    against the conformance vectors: the Ed25519 one comes out byte for byte.
 4. **Publish to Packagist.** A drupal.org release can only depend on packages there. Until then,
-   the site's `composer.json` uses a VCS repository.
+   the site's `composer.json` uses a VCS repository. Not needed while releases are on GitHub only
+   (Q8).
 
 If you'd rather not couple the server to the client ([§14](#14-open-questions), Q4), the fallback is
 `web-token/jwt-library` for JOSE and an in-house JSON Patch applier. The adapters in `lws` make
@@ -1586,7 +1587,7 @@ The MySQL, MariaDB and PostgreSQL CI followed after S7 ("After S7: the database 
     index wrong until a rebuild. `lws_index_link` holds the resource, its storage, the relation,
     the target and a SHA-256 of relation and target, which queries look up. Types include the LWS
     class. Installing the module indexes the resources that exist; `drush lws:index:rebuild` does
-    it again.
+    it again, safely beside live writes.
   - **Every relation clients set is indexed; which ones a search may filter on is decided when it
     runs.**
     - `lws_index.settings:relations` lists them, by default `about`, `author`, `cite-as`,
@@ -1710,8 +1711,21 @@ other LWS servers tested read and lws-drupal did not.
     queries (a correlated `EXISTS`, `DISTINCT` ordered by an alias, `LIKE` on path prefixes) pass
     on all three servers.
 - **Verified:** 657 tests pass on each of SQLite, MySQL 8.4, MariaDB 11.8 and PostgreSQL 17, in
-  Docker, and phpcs and phpstan (level 8) are clean. The workflow itself had not run on GitHub
-  when this was written.
+  Docker, and phpcs and phpstan (level 8) are clean. On GitHub, the first run's database jobs
+  could not pull their images from Docker Hub; the next run, for I1, passed on all three.
+
+**After S7: rebuilding beside live writes.** `Indexer::rebuild()` emptied the table and then
+indexed every resource. A change saved meanwhile could insert a row the rebuild inserted too, and
+one of the two failed with a duplicate key.
+
+- **Now:** each resource is indexed in its own transaction, under the row lock its changes take
+  (`StorageManager::lock()`), as it is then, writing only what differs, and retried after a
+  deadlock as StorageManager's operations are. The rows of resources that no longer exist go last.
+  The index stays whole while it runs.
+- **Verified:** on MariaDB 11.8, two processes changed the types of 20 resources for 30 seconds
+  while a third rebuilt the index. Before: 582 of 803 rebuilds and 60 changes failed, and 2
+  resources ended up indexed wrong. After: 352 rebuilds and 4,258 changes, none failed, and the
+  index matched every resource. The type index tests pass on all four databases.
 
 **S8.** This is `lws_projection`, optional ([§7](#7-optional-modules)).
 
@@ -2128,7 +2142,7 @@ Step 0 ─ S1 ─ A1 ─ S2 ─ S3 ─ S4 ─ A2 ─ A3 ─ A4 ─ S5 ─ A5 ─
 | **M1** | S1 + A1 | A read-only storage protected by tokens from a trusted external AS |
 | **M2** | S2–S4 | Full core CRUD, containers, pagination and linksets: the bulk of Touchstone `core/*` |
 | **M3** | A2 | A self-contained LWS stack: Drupal issues its own tokens (SSI-CID) |
-| **M4** | A3–A4 + S5 | Multi-agent policy, grants and requests; hardened. **First tagged release (1.0.0-alpha1)** |
+| **M4** | A3–A4 + S5 | Multi-agent policy, grants and requests; hardened. **First tagged release (1.0.0-alpha1)**, on GitHub (Q8) |
 
 M5 and later cover the remaining suites and the optional modules.
 
@@ -2218,7 +2232,7 @@ makes. Where `lws-server` (the Java implementation) chose differently, that is n
 | **D12** | Cookies on LWS routes | Never; `lws_bearer` only |
 | **D13** | AS issuer | The site origin, so the metadata sits exactly at `/.well-known/lws-configuration` |
 | **D14** | Build order | A1 before S2: no unauthenticated mode, ever |
-| **D15** | External agents as Drupal users | Optional add-on `lws_agent_users` over contrib `externalauth`; `link_only` by default; roles as assignees, blocking, a restricted bypass permission |
+| **D15** | External agents as Drupal users | Optional add-on `lws_agent_users` over contrib `externalauth`; `link_only` by default (Q9); roles as assignees, blocking, a restricted bypass permission |
 
 ---
 
@@ -2237,17 +2251,20 @@ makes. Where `lws-server` (the Java implementation) chose differently, that is n
    configures, such as Keycloak `lws-authn`, as Drupal itself is not one.
 4. **Q4. Coupling to `ebremer/lws-client`.** *Decided 2026-10-08: reuse it.* `JsonPatch::apply()`
    was added with S4, RSA verification with A5, and a `WebhookSigner` with S6. The client still
-   needs a tagged release on Packagist (before a drupal.org release).
+   needs a tagged release, so that a release of this module can require a version rather than its
+   `main` branch; Packagist only before a drupal.org release (Q8).
 5. **Q5. Separate storage hostname.** Should it be a hard requirement, or a recommendation with a
    status-report warning (as designed)?
 6. **Q6. DPoP.** `lws-server` supports DPoP-bound tokens. Is DPoP wanted for 1.0, or later (A6)?
 7. **Q7. Directly presented credentials.** `lws-server` accepts them by default. Should Drupal
    offer that as an opt-in, for clients that predate token exchange?
 8. **Q8. Release home.** drupal.org project `lws` (requires the client on Packagist), GitHub only,
-   or both?
+   or both? *Decided 2026-10-09: GitHub only, for now.* Releases are tags of this repository; a
+   drupal.org project can follow later, once the client is on Packagist.
 9. **Q9. Provisioning default for `lws_agent_users`.** `link_only`, as designed, or `provision`?
    Provisioning makes role-based sharing work for agents nobody has linked, at the cost of an
-   account per agent ever seen.
+   account per agent ever seen. *Decided 2026-10-09: `link_only`, as designed.* `provision`
+   stays a mode a site can choose.
 
 ---
 

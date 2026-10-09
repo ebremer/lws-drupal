@@ -97,10 +97,27 @@ final class IndexerTest extends IndexKernelTestBase {
     unset($transaction);
     $this->assertNotContains('root/gone/ type t:Gamma', $this->entries());
 
-    // A rebuild makes the same entries.
+    // A rebuild makes the same entries, and mends the index where it went
+    // wrong: an entry the resource no longer has, and those of a resource
+    // that no longer exists.
     $before = $this->entries();
+    $one = $this->resource('root/folder/one');
+    $storageId = $one->getLwsStorageId();
+    $row = static fn (int $id, string $type): array => [
+      $id,
+      $storageId,
+      'type',
+      self::T . $type,
+      Indexer::hash('type', self::T . $type),
+    ];
+    $this->container->get('database')->insert(Indexer::TABLE)
+      ->fields(['resource_id', 'storage_id', 'rel', 'href', 'hash'])
+      ->values($row((int) $one->id(), 'Stale'))
+      ->values($row(999999, 'Gone'))
+      ->execute();
     $this->assertSame(3, $this->container->get('lws_index.indexer')->rebuild());
     $this->assertSame($before, $this->entries());
+    $this->assertSame(count($before), $this->entryCount());
 
     // A recursive delete removes the entries of every resource it deletes.
     $this->storages->deleteResource($this->resource($folder), TRUE);

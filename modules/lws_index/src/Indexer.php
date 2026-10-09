@@ -6,6 +6,7 @@ namespace Drupal\lws_index;
 
 use Drupal\Core\Database\Connection;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
+use Drupal\lws\Database\TransactionConflict;
 use Drupal\lws_storage\Entity\LwsResourceInterface;
 use Drupal\lws_storage\ResourceLinks;
 use Ebremer\Lws\Http\LinkHeader;
@@ -47,6 +48,11 @@ final class Indexer {
    * The resources a rebuild loads at once.
    */
   private const CHUNK = 200;
+
+  /**
+   * How often a rebuild tries a resource while concurrent changes make it fail.
+   */
+  private const ATTEMPTS = 3;
 
   public function __construct(
     private readonly Connection $database,
@@ -158,6 +164,11 @@ final class Indexer {
   /**
    * Indexes every resource again, as when the module is installed.
    *
+   * It runs beside live writes: each resource is indexed as it is, under the
+   * lock its changes take, writing only what differs (reindex()), and then
+   * the rows of resources that no longer exist go (removeOrphans()). The
+   * index stays whole meanwhile, and no write fails because of it.
+   *
    * @param \Closure(int): void|null $progress
    *   Told how many resources have been indexed, after each chunk.
    *
@@ -165,8 +176,6 @@ final class Indexer {
    *   The resources indexed.
    */
   public function rebuild(?\Closure $progress = NULL): int {
-    $this->database->truncate(self::TABLE)->execute();
-    $storage = $this->entityTypeManager->getStorage('lws_resource');
     $done = 0;
     $after = 0;
     while (TRUE) {
@@ -178,19 +187,84 @@ final class Indexer {
         ->execute()
         ?->fetchCol() ?? [];
       if ($ids === []) {
-        return $done;
+        break;
       }
-      foreach ($storage->loadMultiple($ids) as $resource) {
-        if ($resource instanceof LwsResourceInterface) {
-          $this->index($resource);
+      foreach ($ids as $id) {
+        if ($this->reindex((int) $id)) {
           $done++;
         }
       }
-      $storage->resetCache($ids);
+      $this->entityTypeManager->getStorage('lws_resource')->resetCache($ids);
       $after = (int) end($ids);
       if ($progress !== NULL) {
         $progress($done);
       }
+    }
+    $this->removeOrphans();
+    return $done;
+  }
+
+  /**
+   * Indexes a resource in a transaction that holds its row.
+   *
+   * Every change to a resource locks the same row first
+   * (StorageManager::lock()), so a change and this take turns: each reads
+   * what the other wrote, and neither inserts a row the other just did. When
+   * the database gives up on the transaction because of a concurrent one, it
+   * runs again, as StorageManager's operations do.
+   *
+   * @return bool
+   *   FALSE if the resource no longer exists.
+   */
+  private function reindex(int $id): bool {
+    $attempts = $this->database->inTransaction() ? 1 : self::ATTEMPTS;
+    for ($attempt = 1;; $attempt++) {
+      $resource = NULL;
+      $transaction = $this->database->startTransaction();
+      try {
+        $query = $this->database->select('lws_resource', 'r')
+          ->fields('r', ['id'])
+          ->condition('id', $id);
+        $query->forUpdate();
+        $locked = $query->execute()?->fetchField();
+        if ($locked !== FALSE && $locked !== NULL) {
+          $resource = $this->entityTypeManager->getStorage('lws_resource')->loadUnchanged($id);
+        }
+        if ($resource instanceof LwsResourceInterface) {
+          $this->index($resource);
+        }
+      }
+      catch (\Throwable $e) {
+        $transaction->rollBack();
+        unset($transaction);
+        if ($attempt < $attempts && TransactionConflict::is($e)) {
+          usleep(random_int(5000, 25000) * $attempt);
+          continue;
+        }
+        throw $e;
+      }
+      unset($transaction);
+      return $resource instanceof LwsResourceInterface;
+    }
+  }
+
+  /**
+   * Forgets the resources that no longer exist.
+   *
+   * A delete takes a resource's rows with it, so there are none unless the
+   * index went wrong. Resource IDs are never used again, so the rows found
+   * can go in a later statement.
+   */
+  private function removeOrphans(): void {
+    $query = $this->database->select(self::TABLE, 'l');
+    $query->leftJoin('lws_resource', 'r', '[r].[id] = [l].[resource_id]');
+    $orphans = $query->fields('l', ['resource_id'])
+      ->isNull('r.id')
+      ->distinct()
+      ->execute()
+      ?->fetchCol() ?? [];
+    foreach (array_chunk($orphans, self::CHUNK) as $ids) {
+      $this->database->delete(self::TABLE)->condition('resource_id', $ids, 'IN')->execute();
     }
   }
 
