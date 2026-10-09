@@ -1,0 +1,7 @@
+lws_agent_users.settings:
+  path: '/admin/config/services/lws/agent-users'
+  defaults:
+    _form: '\Drupal\lws_agent_users\Form\AgentUsersSettingsForm'
+    _title: 'Agent users'
+  requirements:
+    _permission: 'administer lws'

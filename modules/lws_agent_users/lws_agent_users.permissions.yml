@@ -1,0 +1,4 @@
+bypass lws access policy:
+  title: 'Bypass LWS access policies'
+  description: 'The agent linked to the account may do anything in every LWS storage, as the storage&rsquo;s controllers may, whatever its access policies say.'
+  restrict access: true

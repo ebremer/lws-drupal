@@ -926,7 +926,8 @@ This makes Drupal a *complete* LWS stack, as the Keycloak `lws-authn` extension 
   authmap, so tokens for it act as that user.
 
 Built in step I1 ([§10](#10-implementation-plan)), with two changes: the OpenID Providers are a
-list the site configures, as Drupal is not one, and the authmap link waits for `lws_agent_users`.
+list the site configures, as Drupal is not one, and there is no authmap link: `lws_agent_users`
+(U1) maps these agents to their users without one.
 
 ### 7.4 `lws_projection` (optional, later)
 
@@ -2102,7 +2103,7 @@ the plan above:
     guard only on a public address, and holds a second PHP worker while the first waits. They are
     not cached, so a key removed or an account blocked stops working here at once. `lws_authz`
     does not depend on `lws_identity`: without it the argument is NULL.
-  - **No authmap link:** that is `lws_agent_users` (U1), not built.
+  - **No authmap link:** `lws_agent_users` (U1) maps this site's agents to their users itself.
 - **Also built:** the *LWS identity* tab on the user page (`/user/{uid}/lws-identity`: the agent
   URI, the keys, *Add a key*, *Remove*), for the user with *Manage own LWS agent keys* while they
   have an agent, and for *Administer LWS agents*; the *Agent identities* settings tab; Drush
@@ -2128,6 +2129,79 @@ the plan above:
   - a blocked user's token gets `403`;
   - a change of role membership takes effect on the next request;
   - a bearer token never reaches a non-LWS route as the mapped user.
+
+**Done** (decided 2026-10-09: `link_only` by default, Q9). Differences from §7.5:
+
+- **Built as planned:**
+  - **The link:** the externalauth authmap, provider `lws`, authname `sha256:` and the hex SHA-256
+    of the agent URI, and the URI itself in the user field `lws_agent_uri`, which administrators
+    of users edit on the user form (with a constraint: an absolute URI, no other user's, and not
+    one of this site's own agents) or Drush sets. The field is the source; user hooks keep the
+    authmap in step, and externalauth drops the entry with the account.
+  - **What the user makes of the agent,** read on every request, so a change counts from the
+    next: its roles as groups, `{base URL}{prefix}/roles/{role}` (the reserved segment `roles`;
+    `authenticated` included), which `PolicyAccessDecision` and `PolicyEvaluator` match as
+    assignees; a blocked user denied everything, not even as a controller; and the restricted
+    permission *Bypass LWS access policies* (`bypass lws access policy`) as a controller of every
+    storage, Control included. No other Drupal permission counts. User 1 has the bypass, as it
+    has every permission, so with `lws_identity` user 1's own agent controls every storage unless
+    the site turns the super user off, and its keys matter as much as the account's password.
+  - **The mapped user is the current user** of the agent's LWS requests (`AgentUserSession`), and
+    only there: `LwsBearerProvider` applies in the LWS URL space alone, and is not a global
+    provider. It never starts a session: core records a session's user only at login.
+  - **`provision` mode:** the first valid token of an agent without an account makes one through
+    `ExternalAuth::register()`: no password or e-mail address, the name `lws-agent-` and 24 hex
+    digits of the URI's hash, the configured roles but never an administrator role, and the flag
+    field `lws_agent_provisioned`. Two first requests at once make one account: the second finds
+    the first's. Such an account cannot log in: the login form clears its user ID after the
+    password check, so it fails as a wrong password does and counts against the flood limits.
+  - **Pruning** on cron, when `prune_after_days` is set: provisioned accounts unseen for that long,
+    50 a run, cancelled with `user_cancel_reassign` in a batch run in one pass. "Seen" is core's
+    `access` time, which `UserRequestSubscriber` updates as the agent's user is the current user;
+    an account never seen counts from its creation. The status messages the cancellation leaves
+    are removed, as automated cron would show them to whoever's request ran it.
+- **Built differently:**
+  - **The seam.** `lws` defines `AgentUsersInterface::find(agent, provision)`, which
+    `lws_agent_users` provides as the service of that name; `LwsBearerProvider` and lws_notify's
+    `Subscriptions::agentOf()` take it as an optional argument, so subscribers are judged as their
+    user is at the change and at delivery. What the user makes of the agent travels on the agent:
+    `RequestingAgent` gained `groups`, `blocked` and `controlsEveryStorage`, so the access
+    decision still decides from the agent and the policies alone.
+  - **This site's agents** (`lws_identity`) act as their users without an authmap entry: the
+    agent URI names the user's UUID. So they keep working with an external agent linked to the
+    same user, beside the limit of one authmap entry per user and provider. A blocked user's own
+    agent is found still, so that it is barred, while its document is gone.
+  - **Provisioning limits:** authorization servers by issuer (the token's `iss`; a storage's own
+    server signs every token it issues, whoever the agent is), agent URI prefixes rather than
+    patterns, and a new limit of accounts per hour for the whole site (100 by default, through
+    the flood service). With self-signed DIDs anyone can mint agents, each with a token from this
+    site's own server; the limit bounds what that costs. An agent over a limit goes on as an agent.
+  - **Blocked agents get `403` everywhere in the URL space**, from a request subscriber after
+    authentication, for what needs no access decision too: a storage description, an access
+    request, a URL that names nothing. Their tokens stay valid, so unblocking lets them in again.
+  - **Attribution** needed `lws_storage`: content files were saved as Anonymous's (`uid` 0), and
+    are now the current user's (still Anonymous for an agent without `lws_agent_users`; the
+    administrator on administration pages). When a user is deleted, `lws_storage` gives the LWS
+    files to Anonymous: core leaves them naming a user who is gone.
+- **Not built:** Group module memberships as assignees (`…/lws/groups/{id}`, reserved); a
+  status-report entry for provisioning without limits. Accounts made for agents can still be
+  logged into by an administrator's one-time link (`drush uli`), which is the administrator's to
+  use.
+- **Also built:** the *Agent users* settings tab; Drush commands `lws:agent-users:link`, `unlink`,
+  `find` and `prune`. Uninstalling removes the links; the accounts stay, without passwords.
+- **Verified:**
+  - kernel tests, through the HTTP kernel, of both modes; a change of roles counting from the next
+    request; a blocked user's token getting `403` everywhere (its own storage, the description, a
+    URL that names nothing) and let in again, unblocked, with the same token; the bypass, and
+    Drupal permissions giving nothing else; the token outside the LWS URL space, and no session;
+    attribution; the field's rules and access; the provisioning limits; the login refusal; pruning
+    and the last-seen time; the settings form; uninstalling; this site's own agents; subscribers;
+  - on the development site, through Apache: a role policy letting a user's own agent in, `403`
+    once the user is blocked and `200` again unblocked with the same token, a file it wrote owned
+    by the user, no `Set-Cookie`, and `403` for `/user/{uid}` and `/admin/people` with its token;
+    and the Drush commands;
+  - 702 tests (16 of them new) pass on SQLite and MariaDB 11.8, and the new ones on MySQL 8.4 and
+    PostgreSQL 17; phpcs and phpstan (level 8) are clean.
 
 ### Build order and milestones
 

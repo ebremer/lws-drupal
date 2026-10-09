@@ -1,0 +1,20 @@
+<?php
+
+/**
+ * @file
+ * Install and uninstall hooks of the LWS Agent Users module.
+ */
+
+declare(strict_types=1);
+
+use Drupal\lws_agent_users\AgentUsers;
+
+/**
+ * Implements hook_uninstall().
+ *
+ * The links go with the module: no agent acts as a user any more. Accounts
+ * made for agents stay, as ordinary accounts without a password.
+ */
+function lws_agent_users_uninstall(bool $is_syncing): void {
+  \Drupal::service('externalauth.authmap')->deleteProvider(AgentUsers::PROVIDER);
+}

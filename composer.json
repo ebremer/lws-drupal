@@ -27,6 +27,9 @@
         "ebremer/lws-client": "dev-main",
         "pietercolpaert/hardf": "^0.6"
     },
+    "suggest": {
+        "drupal/externalauth": "For the lws_agent_users add-on: LWS agents as Drupal users (^2.0)"
+    },
     "extra": {
         "installer-name": "lws"
     }

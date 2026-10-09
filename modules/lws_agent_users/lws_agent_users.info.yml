@@ -1,0 +1,11 @@
+name: 'LWS Agent Users'
+type: module
+description: 'Lets W3C Linked Web Storage (LWS) agents act as Drupal users: access policies for Drupal roles, blocking an account to bar its agent, and a permission to bypass access policies.'
+package: 'Linked Web Storage'
+core_version_requirement: ^11.3
+configure: lws_agent_users.settings
+dependencies:
+  - drupal:user
+  - externalauth:externalauth
+  - lws:lws
+  - lws:lws_authz

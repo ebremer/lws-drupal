@@ -1,0 +1,32 @@
+services:
+  logger.channel.lws_agent_users:
+    parent: logger.channel_base
+    arguments: ['lws_agent_users']
+
+  # The Drupal users agents act as (DESIGN.md §7.5), for lws_authz's bearer
+  # provider and lws_notify.
+  lws_agent_users.agent_users:
+    class: Drupal\lws_agent_users\AgentUsers
+    arguments:
+      - '@entity_type.manager'
+      - '@externalauth.authmap'
+      - '@externalauth.externalauth'
+      - '@config.factory'
+      - '@lws.url_generator'
+      - '@lws.url_parser'
+      - '@flood'
+      - '@logger.channel.lws_agent_users'
+      # Provided by lws_identity: this site's own agent URIs.
+      - '@?lws_identity.agent_uris'
+  Drupal\lws_agent_users\AgentUsers: '@lws_agent_users.agent_users'
+  Drupal\lws\Agent\AgentUsersInterface: '@lws_agent_users.agent_users'
+
+  lws_agent_users.pruner:
+    class: Drupal\lws_agent_users\Pruner
+    arguments: ['@entity_type.manager', '@config.factory', '@datetime.time', '@messenger', '@logger.channel.lws_agent_users']
+  Drupal\lws_agent_users\Pruner: '@lws_agent_users.pruner'
+
+  lws_agent_users.blocked_agent_subscriber:
+    class: Drupal\lws_agent_users\EventSubscriber\BlockedAgentSubscriber
+    tags:
+      - { name: event_subscriber }

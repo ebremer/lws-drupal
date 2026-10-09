@@ -1,0 +1,18 @@
+# link_only: only agents linked to an account act as a user: an administrator
+# links them on the user's edit form, and with lws_identity every user's own
+# agent acts as that user. provision: the first valid token of any other agent
+# creates an account for it, within the limits below.
+mode: link_only
+provision:
+  # The authorization servers whose tokens may create accounts, by issuer;
+  # none listed, any the storage trusts.
+  issuers: []
+  # What the agent URI must start with; none listed, any.
+  prefixes: []
+  # The roles new accounts get, besides "authenticated".
+  roles: []
+  # At most this many accounts created per hour, for the whole site.
+  per_hour: 100
+# Delete provisioned accounts unseen for this many days, their content given
+# to Anonymous; 0 keeps them.
+prune_after_days: 0

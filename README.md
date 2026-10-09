@@ -13,14 +13,15 @@ is in [DESIGN.md](DESIGN.md).
 | `lws_notify` | Notifications: the notification service, webhook subscriptions, and signed deliveries of changes and of access requests and grants (optional) |
 | `lws_index` | The type index and type search services: the types of what an agent may read, and the resources that match a filter on types and links (optional) |
 | `lws_identity` | Agent identities for Drupal users: an agent URI with a controlled identifier document naming their keys and OpenID Providers, and optionally a storage each (optional) |
+| `lws_agent_users` | LWS agents as Drupal users: access policies for Drupal roles, blocking an account to bar its agent, a permission to bypass access policies, and optionally an account for every agent (optional; needs `externalauth`) |
 
 ## Status
 
-**Step I1, agent identities** (DESIGN.md §10), after S1, storages, A1, access
+**Step U1, agent users** (DESIGN.md §10), after S1, storages, A1, access
 tokens, S2, data resources, S3, pagination, S4, metadata and JSON Patch, A2, the
 authorization server, A3, access policies, A4, access requests and grants, S5,
 hardening and the administration pages, A5, OpenID Connect, S6,
-notifications, and S7, the type index. Storages are created at *Content ›
+notifications, S7, the type index, and I1, agent identities. Storages are created at *Content ›
 LWS storages* or with Drush; everything in them is managed over HTTP, with
 access tokens the site issues itself, for self-signed credentials or OpenID
 Connect ID Tokens, by their controllers and by the agents their access policies
@@ -48,6 +49,7 @@ allow:
 | `GET /lws/{storage}/types/index` | With `lws_index`: the distinct types of the resources the agent may read, as a paged `TypeIndex` ([Type index and search](#type-index-and-search)) |
 | `QUERY /lws/{storage}/types/search` | With `lws_index`: the resources the agent may read that match an `application/lws-query+json` filter on types and links, as a paged `ContainerPage` |
 | `GET /lws/agents/{uuid}` | With `lws_identity`: an agent's controlled identifier document (`application/cid`, or `ld+json`/`json`), to anyone ([Agent identities](#agent-identities)) |
+| `GET /lws/roles/{role}` | With `lws_agent_users`: `404`. A role URI names a Drupal role as the assignee of access policies, and nothing else ([Agent users](#agent-users)) |
 | `GET /.well-known/lws-configuration` | The authorization server's metadata (RFC 8414) |
 | `POST /lws/oauth/token` | Token exchange (RFC 8693): a self-signed credential or an OpenID Connect ID Token for an access token to a storage |
 | `GET /lws/oauth/jwks` | The keys that sign access tokens |
@@ -91,7 +93,8 @@ drush lws:gc                                           # sweep unreferenced cont
 | `/admin/content/lws/{id}/subscriptions` | With `lws_notify`: who subscribed to what, where it is delivered, and how deliveries fare; *Cancel* |
 | `/admin/content/lws/{id}/delete` | Deletes it with everything in it; a large storage is blocked first and emptied in a batch |
 | `/user/{uid}/lws-identity` | With `lws_identity`: the user's agent URI and keys; *Add a key*, *Remove*. For the user, with *Manage own LWS agent keys*, and for administrators of agents |
-| *Configuration › Web services › Linked Web Storage* | The base URL, path prefix and concealment; on the *Storages* tab, where content goes, the largest content, the largest recursive delete, the page size and whether changes need `If-Match`; on the *Notifications* tab, whether activities name their actor, the limits on subscriptions, and how deliveries are made and retried; on the *Type index* tab, the relations searches may filter on; on the *Agent identities* tab, the OpenID Providers agents' documents name and whether each new agent gets a storage |
+| `/user/{uid}/edit` | With `lws_agent_users`: *LWS agent URI*, the agent that acts as the user, and whether the account was made for one. For administrators of users |
+| *Configuration › Web services › Linked Web Storage* | The base URL, path prefix and concealment; on the *Storages* tab, where content goes, the largest content, the largest recursive delete, the page size and whether changes need `If-Match`; on the *Notifications* tab, whether activities name their actor, the limits on subscriptions, and how deliveries are made and retried; on the *Type index* tab, the relations searches may filter on; on the *Agent identities* tab, the OpenID Providers agents' documents name and whether each new agent gets a storage; on the *Agent users* tab, whether agents without an account get one, within which limits, and when unseen ones go |
 
 *Create media item* (with Media) copies a data resource's content into a new,
 unpublished Media item of a type made from a file. The copy is the site's: later
@@ -290,6 +293,59 @@ drush lws:agent:key-delete alice <kid>
 drush lws:agent:provision alice                     # a storage for the agent
 ```
 
+## Agent users
+
+With `lws_agent_users` enabled (it needs the contrib
+[`externalauth`](https://www.drupal.org/project/externalauth) module), an LWS
+agent can act as a Drupal user. In its LWS requests, and only there, the agent
+is that user:
+
+- **Roles are assignees.** An access policy whose assignee is
+  `https://site.example/lws/roles/{role}` applies to the agents of the users
+  in that role, and one for `…/roles/authenticated` to every agent that acts as
+  a user. A change of roles counts from the next request. Role URIs are
+  identifiers only, and answer `404`.
+- **Blocking bars the agent.** The agent of a blocked user gets `403` for
+  everything in the LWS URL space, its own storages included, and its
+  subscriptions get no notifications. Unblocking lets it in again, with the
+  same tokens.
+- **Bypass LWS access policies,** a restricted permission, makes the agent a
+  controller of every storage, for support staff. No other Drupal permission
+  gives any LWS access. User 1 has it, as it has every permission, so with
+  `lws_identity` user 1's own agent controls every storage, unless the site
+  turns the super user off (`security.enable_super_user: false` in
+  `services.yml`).
+- **Attribution.** The files of what the agent writes are the user's, and the
+  log names the user. When the account is deleted, the files go to
+  Anonymous; the content stays.
+
+Which agents act as users:
+
+- **Linked agents.** An administrator of users sets *LWS agent URI* on the
+  user's edit form, or Drush does. A user has at most one, and an agent acts
+  as at most one user. The link is kept in externalauth's authmap.
+- **This site's own agents.** With `lws_identity`, each user's own agent URI
+  acts as that user, without a link.
+- **Every other agent, in provision mode** (the *Agent users* settings tab;
+  off by default). The first valid token of an agent without an account makes
+  one for it: no password or e-mail address, a name such as
+  `lws-agent-3f9a…`, and the roles the settings give, never an administrator
+  role. Such an account cannot log in. It can be limited to tokens of listed
+  authorization servers, or to agent URIs that start with listed prefixes, and
+  to so many accounts an hour (100 by default). Pseudonymous identifiers make
+  an account each. Cron deletes the accounts made this way once unseen for as
+  many days as the settings say, their content given to Anonymous.
+
+The access token only ever authenticates requests in the LWS URL space. It
+never yields a session, and no other route sees the user.
+
+```sh
+drush lws:agent-users:link bob https://bob.example/profile#me
+drush lws:agent-users:find https://bob.example/profile#me   # the user, its groups, whether it is blocked
+drush lws:agent-users:unlink bob
+drush lws:agent-users:prune                                 # now, rather than at cron
+```
+
 ## Access tokens
 
 A storage accepts RFC 9068 access tokens (`typ: at+jwt`, signed with ES256,
@@ -372,6 +428,9 @@ $settings['lws_outbound_allowlist'] = ['http://localhost:8080'];
 - [`pietercolpaert/hardf`](https://github.com/pietercolpaert/hardf) (MIT, no
   dependencies), a Turtle and N-Triples parser, for the types `lws_index` reads
   from content; Composer installs it with this module.
+- For `lws_agent_users` only, [`drupal/externalauth`](https://www.drupal.org/project/externalauth)
+  2.0 or later, which keeps the links of agents to users:
+  `composer require 'drupal/externalauth:^2.0'`.
 
 ## Development with DDEV
 

@@ -10,7 +10,6 @@ use Drupal\Core\Queue\QueueFactory;
 use Drupal\lws\Access\AccessDecisionInterface;
 use Drupal\lws\Access\Action;
 use Drupal\lws\Access\ResourceContext;
-use Drupal\lws\Agent\RequestingAgent;
 use Drupal\lws\Outbound\OutboundHttp;
 use Drupal\lws\Outbound\OutboundHttpException;
 use Drupal\lws_authz\Server\SigningKeys;
@@ -123,7 +122,7 @@ final class Deliverer {
       if ($subscription === NULL || !$subscription->isLive($this->time->getCurrentTime())) {
         return;
       }
-      $agent = new RequestingAgent($subscription->getAgent(), $subscription->getClient());
+      $agent = $this->subscriptions->agentOf($subscription);
       $delivery->filter(fn (array $activity, ?ResourceContext $context): bool => $context !== NULL && $this->decisions->decide($agent, Action::Read, $context)->isPermitted());
       if ($delivery->isEmpty()) {
         return;

@@ -1,0 +1,46 @@
+lws_agent_users.settings:
+  type: config_object
+  label: 'LWS agent users settings'
+  mapping:
+    mode:
+      type: string
+      label: 'Which agents act as users'
+      constraints:
+        Choice:
+          choices:
+            - link_only
+            - provision
+    provision:
+      type: mapping
+      label: 'Provisioning'
+      mapping:
+        issuers:
+          type: sequence
+          label: 'The authorization servers whose tokens may create accounts'
+          sequence:
+            type: uri
+            label: 'Issuer'
+        prefixes:
+          type: sequence
+          label: 'What agent URIs that get accounts start with'
+          sequence:
+            type: string
+            label: 'Prefix'
+        roles:
+          type: sequence
+          label: 'The roles of new accounts'
+          sequence:
+            type: string
+            label: 'Role'
+        per_hour:
+          type: integer
+          label: 'Accounts created per hour, at most'
+          constraints:
+            Range:
+              min: 0
+    prune_after_days:
+      type: integer
+      label: 'Days after which unseen provisioned accounts are deleted; 0 keeps them'
+      constraints:
+        Range:
+          min: 0

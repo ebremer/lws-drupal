@@ -1,0 +1,5 @@
+lws_agent_users.settings:
+  title: 'Agent users'
+  route_name: lws_agent_users.settings
+  base_route: lws.settings
+  weight: 50

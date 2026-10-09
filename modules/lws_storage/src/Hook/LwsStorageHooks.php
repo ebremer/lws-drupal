@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Drupal\lws_storage\Hook;
 
+use Drupal\Core\Database\Connection;
+use Drupal\Core\Entity\EntityInterface;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\Hook\Attribute\Hook;
 use Drupal\Core\Session\AccountInterface;
@@ -20,7 +22,31 @@ final class LwsStorageHooks {
     private readonly ContentStore $content,
     private readonly AccountInterface $currentUser,
     private readonly EntityTypeManagerInterface $entityTypeManager,
+    private readonly Connection $database,
   ) {}
+
+  /**
+   * Implements hook_ENTITY_TYPE_predelete() for user.
+   *
+   * LWS content outlives the account that wrote it: it is the storage's. Its
+   * files go to Anonymous, as "reassign" does with nodes, so that none names
+   * a user who is gone. Core leaves other files as they are.
+   */
+  #[Hook('user_predelete')]
+  public function userPredelete(EntityInterface $user): void {
+    $files = $this->database->select('file_managed', 'f')
+      ->fields('f', ['fid', 'uri'])
+      ->condition('uid', (int) $user->id())
+      ->execute()
+      ?->fetchAllKeyed() ?? [];
+    $fids = array_keys(array_filter($files, fn ($uri): bool => $this->content->owns((string) $uri)));
+    foreach (array_chunk($fids, 500) as $chunk) {
+      $this->database->update('file_managed')->fields(['uid' => 0])->condition('fid', $chunk, 'IN')->execute();
+    }
+    if ($fids !== []) {
+      $this->entityTypeManager->getStorage('file')->resetCache($fids);
+    }
+  }
 
   /**
    * Implements hook_file_download().

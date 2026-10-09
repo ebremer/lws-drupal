@@ -29,6 +29,7 @@ services:
       - '@datetime.time'
       - '@event_dispatcher'
       - '@lws_storage.resource_links'
+      - '@current_user'
     tags:
       - { name: needs_destruction }
   Drupal\lws_storage\StorageManager: '@lws_storage.storage_manager'

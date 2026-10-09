@@ -10,6 +10,7 @@ use Drupal\Core\Entity\EntityStorageInterface;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\Entity\Query\QueryInterface;
 use Drupal\lws\Access\ResourceContext;
+use Drupal\lws\Agent\AgentUsersInterface;
 use Drupal\lws\Agent\RequestingAgent;
 use Drupal\lws\Routing\LwsUrlGenerator;
 use Drupal\lws\Storage\StorageRef;
@@ -45,7 +46,19 @@ final class Subscriptions {
     private readonly LwsUrlGenerator $urls,
     private readonly TimeInterface $time,
     private readonly ConfigFactoryInterface $configFactory,
+    private readonly ?AgentUsersInterface $users = NULL,
   ) {}
+
+  /**
+   * The subscriber: the agent through its client.
+   *
+   * With lws_agent_users, as the Drupal user it acts as makes it now: in that
+   * user's roles, and refused everything once the user is blocked.
+   */
+  public function agentOf(LwsSubscriptionInterface $subscription): RequestingAgent {
+    $agent = new RequestingAgent($subscription->getAgent(), $subscription->getClient());
+    return $this->users?->find($agent)->agent ?? $agent;
+  }
 
   /**
    * Stores a subscription.

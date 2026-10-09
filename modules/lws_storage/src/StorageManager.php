@@ -14,6 +14,7 @@ use Drupal\Core\DestructableInterface;
 use Drupal\Core\Entity\EntityStorageException;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\Queue\QueueFactory;
+use Drupal\Core\Session\AccountInterface;
 use Drupal\file\FileInterface;
 use Drupal\file\FileUsage\FileUsageInterface;
 use Drupal\file\Validation\FileValidatorInterface;
@@ -88,6 +89,7 @@ final class StorageManager implements DestructableInterface {
     private readonly TimeInterface $time,
     private readonly EventDispatcherInterface $events,
     private readonly ResourceLinks $links,
+    private readonly AccountInterface $currentUser,
   ) {}
 
   /**
@@ -795,6 +797,9 @@ final class StorageManager implements DestructableInterface {
 
   /**
    * Saves a permanent file entity for stored content.
+   *
+   * It is the current user's: anonymous for an agent, unless lws_agent_users
+   * makes the agent a user; the user for administration pages and Drush.
    */
   private function newFile(StoredContent $content, string $name, string $mediaType): FileInterface {
     $file = $this->entityTypeManager->getStorage('file')->create([
@@ -802,7 +807,7 @@ final class StorageManager implements DestructableInterface {
       'filename' => rtrim($name, '/'),
       'filemime' => $mediaType,
       'filesize' => $content->size,
-      'uid' => 0,
+      'uid' => (int) $this->currentUser->id(),
     ]);
     $file->setPermanent();
     $file->save();

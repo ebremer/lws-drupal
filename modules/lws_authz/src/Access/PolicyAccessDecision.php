@@ -23,6 +23,11 @@ use Drupal\lws_authz\Policy\PolicyStore;
  * access policy of the storage permits them, and nothing more: only
  * controllers have Control. Policies are read afresh for every request, so a
  * policy deleted takes effect on the next one.
+ *
+ * With lws_agent_users, an agent whose Drupal user is blocked may do nothing,
+ * not even as a controller; one whose user may bypass access policies counts
+ * as a controller of every storage; and policies for the user's roles apply
+ * to it (DESIGN.md §7.5).
  */
 final class PolicyAccessDecision implements AccessDecisionInterface {
 
@@ -35,6 +40,9 @@ final class PolicyAccessDecision implements AccessDecisionInterface {
    * {@inheritdoc}
    */
   public function decide(RequestingAgent $agent, Action $action, ResourceContext $resource): Decision {
+    if ($agent->blocked) {
+      return Decision::Deny;
+    }
     if (self::controls($agent, $resource->storage)) {
       return Decision::Permit;
     }
@@ -54,6 +62,9 @@ final class PolicyAccessDecision implements AccessDecisionInterface {
    * {@inheritdoc}
    */
   public function forAgent(RequestingAgent $agent, StorageRef $storage): AgentAccessScopeInterface {
+    if ($agent->blocked) {
+      return new PolicyAccessScope($agent, $storage, [], $this->time->getRequestTime(), FALSE);
+    }
     if (self::controls($agent, $storage)) {
       return new PolicyAccessScope($agent, $storage, [], $this->time->getRequestTime(), TRUE);
     }
@@ -68,20 +79,20 @@ final class PolicyAccessDecision implements AccessDecisionInterface {
    * The assignees whose policies apply to an agent.
    *
    * @return list<string>
-   *   The public, and an authenticated agent itself and every authenticated
-   *   agent.
+   *   The public, and an authenticated agent itself, every authenticated
+   *   agent and the groups it is in.
    */
   private static function assignees(RequestingAgent $agent): array {
     return $agent->isAuthenticated()
-      ? [AccessPolicy::PUBLIC, AccessPolicy::AUTHENTICATED, (string) $agent->subject]
+      ? [AccessPolicy::PUBLIC, AccessPolicy::AUTHENTICATED, (string) $agent->subject, ...$agent->groups]
       : [AccessPolicy::PUBLIC];
   }
 
   /**
-   * Whether an agent is a controller of a storage.
+   * Whether an agent is a controller of a storage, or of every storage.
    */
   private static function controls(RequestingAgent $agent, StorageRef $storage): bool {
-    return $agent->isAuthenticated() && in_array($agent->subject, $storage->controllers, TRUE);
+    return $agent->isAuthenticated() && ($agent->controlsEveryStorage || in_array($agent->subject, $storage->controllers, TRUE));
   }
 
 }

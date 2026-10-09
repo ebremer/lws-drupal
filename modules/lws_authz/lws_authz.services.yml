@@ -73,6 +73,8 @@ services:
       - '@lws_authz.authorization_servers'
       - '@lws_authz.access_token_validator'
       - '@logger.channel.lws_authz'
+      # Provided by lws_agent_users: the Drupal users agents act as.
+      - '@?Drupal\lws\Agent\AgentUsersInterface'
     tags:
       # Above basic_auth (100) and cookie (0). It applies only in the LWS URL
       # space, so it takes nothing from other providers elsewhere.

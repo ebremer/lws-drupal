@@ -16,7 +16,7 @@ use Ebremer\Lws\ResourceType;
  *
  * - the action is one of its actions;
  * - its assignee is the agent, the public, or, for an authenticated agent,
- *   every authenticated agent;
+ *   every authenticated agent or a group the agent is in;
  * - its target matches: the resource is of its target type (any, for
  *   StorageResource), and one of its target values is the resource, a
  *   container above it, or the storage (D6). A container may be named with
@@ -53,8 +53,11 @@ final class PolicyEvaluator {
    * Whether a policy is for an agent.
    */
   public static function assigned(AccessPolicy $policy, RequestingAgent $agent): bool {
-    return $policy->assignee === AccessPolicy::PUBLIC
-      || ($agent->isAuthenticated() && in_array($policy->assignee, [AccessPolicy::AUTHENTICATED, $agent->subject], TRUE));
+    if ($policy->assignee === AccessPolicy::PUBLIC) {
+      return TRUE;
+    }
+    $assignees = [AccessPolicy::AUTHENTICATED, $agent->subject, ...$agent->groups];
+    return $agent->isAuthenticated() && in_array($policy->assignee, $assignees, TRUE);
   }
 
   /**

@@ -13,6 +13,7 @@ use Drupal\lws\Agent\RequestingAgent;
  * LWS agents are not Drupal users (DESIGN.md D4): to Drupal the request is
  * anonymous, and Drupal permissions play no part in LWS decisions. The agent
  * is carried along for code that wants to know who it is, such as logging.
+ * An agent that lws_agent_users maps to a user is that user instead.
  */
 final class LwsAccount extends AnonymousUserSession {
 

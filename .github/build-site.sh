@@ -22,5 +22,7 @@ composer config --no-plugins allow-plugins.tbachert/spi false
 # itself names its repository and requires the branch.
 composer config repositories.lws-client vcs https://github.com/ebremer/lws-client
 composer require 'ebremer/lws-client:dev-main' 'ebremer/lws-drupal:*@dev' --no-update
+# For the lws_agent_users add-on, and its tests.
+composer require 'drupal/externalauth:^2.0' --no-update
 composer require --dev 'drupal/core-dev:^11' 'drush/drush:^13' --no-update
 composer update --no-interaction --no-progress

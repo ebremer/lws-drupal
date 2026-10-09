@@ -12,7 +12,13 @@ services:
 
   lws_notify.subscriptions:
     class: Drupal\lws_notify\Subscriptions
-    arguments: ['@entity_type.manager', '@lws.url_generator', '@datetime.time', '@config.factory']
+    arguments:
+      - '@entity_type.manager'
+      - '@lws.url_generator'
+      - '@datetime.time'
+      - '@config.factory'
+      # Provided by lws_agent_users: the Drupal users agents act as.
+      - '@?Drupal\lws\Agent\AgentUsersInterface'
   Drupal\lws_notify\Subscriptions: '@lws_notify.subscriptions'
 
   lws_notify.subscription_parser:

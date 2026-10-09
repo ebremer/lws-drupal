@@ -12,7 +12,6 @@ use Drupal\lws\Access\AccessDecisionInterface;
 use Drupal\lws\Access\Action;
 use Drupal\lws\Access\ResourceContext;
 use Drupal\lws\Agent\Authentication;
-use Drupal\lws\Agent\RequestingAgent;
 use Drupal\lws\Routing\LwsUrlGenerator;
 use Drupal\lws_authz\AccessService\AccessRecordEvent;
 use Drupal\lws_authz\Entity\LwsAccessRecordInterface;
@@ -85,7 +84,7 @@ final class Notifier implements EventSubscriberInterface, DestructableInterface 
       $resource = $event->resource;
       $activity = NULL;
       foreach ($this->subscriptions->covering($resource) as $subscription) {
-        $agent = new RequestingAgent($subscription->getAgent(), $subscription->getClient());
+        $agent = $this->subscriptions->agentOf($subscription);
         if (!$this->decisions->decide($agent, Action::Read, $resource)->isPermitted()) {
           continue;
         }
