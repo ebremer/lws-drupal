@@ -12,7 +12,7 @@ use Drupal\lws_index\Query\FilterParser;
 use Drupal\lws_index\Relations;
 
 /**
- * Settings of the type index: the relations searches may filter on.
+ * Settings of the type index: relations to filter on, types from content.
  */
 final class IndexSettingsForm extends ConfigFormBase {
 
@@ -61,6 +61,25 @@ final class IndexSettingsForm extends ConfigFormBase {
         fromConfig: static fn (?array $relations): string => implode("\n", $relations ?? []),
         toConfig: static fn (?string $text): array => self::relations((string) $text),
       ),
+    ];
+    $form['content_types'] = [
+      '#type' => 'details',
+      '#title' => $this->t('Types read from content'),
+      '#open' => TRUE,
+      'enabled' => [
+        '#type' => 'checkbox',
+        '#title' => $this->t('Read the types Turtle and N-Triples content states about the resource itself'),
+        '#description' => $this->t('Besides the types clients declare in Link headers, the index then holds those a resource&rsquo;s content gives it, such as <code>&lt;&gt; a &lt;https://schema.org/Note&gt; .</code>, and searches find it by them. The content is parsed as each resource is saved. Run <code>drush lws:index:rebuild</code> after a change here, so that the resources stored before it are read, or no longer.'),
+        '#config_target' => 'lws_index.settings:content_types.enabled',
+      ],
+      'max_bytes' => [
+        '#type' => 'number',
+        '#title' => $this->t('Largest content read'),
+        '#description' => $this->t('In bytes. Larger content states no types.'),
+        '#min' => 0,
+        '#field_suffix' => $this->t('bytes'),
+        '#config_target' => 'lws_index.settings:content_types.max_bytes',
+      ],
     ];
     return parent::buildForm($form, $form_state);
   }

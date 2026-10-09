@@ -203,8 +203,16 @@ Content-Type: application/lws-query+json
   linkset declare them, with its class (`lws:Container` or
   `lws:DataResource`), and the targets of the other links its clients set. The
   index changes in the same transaction as the resource, so it is never
-  behind. Types are not read from the content: a type stated only in a Turtle
-  or JSON-LD body is not found.
+  behind.
+- **Types read from content,** if the *Type index* settings turn it on
+  (`lws_index.settings:content_types.enabled`; off by default). Turtle and
+  N-Triples content up to `content_types.max_bytes` (256 KiB) is parsed as it
+  is saved, and the IRIs it gives the resource itself with `rdf:type`
+  (`<> a <https://schema.org/Note> .`) are indexed, searched and filtered
+  exactly as declared types are, up to 64 of them. Content that does not parse
+  states no type and is stored all the same. They are not added to the linkset.
+  JSON-LD is not read, so no remote context is ever fetched. After turning it on
+  or off, `drush lws:index:rebuild` reads the content stored before.
 - **Which relations a search may filter on.** `type`, and the descriptive
   relations listed on the *Type index* settings tab: by default `about`,
   `author`, `cite-as`, `describedby`, `license`, `profile` and `related`.
@@ -313,6 +321,9 @@ $settings['lws_outbound_allowlist'] = ['http://localhost:8080'];
   composer config repositories.lws-client vcs https://github.com/ebremer/lws-client
   composer require 'ebremer/lws-client:dev-main'
   ```
+- [`pietercolpaert/hardf`](https://github.com/pietercolpaert/hardf) (MIT, no
+  dependencies), a Turtle and N-Triples parser, for the types `lws_index` reads
+  from content; Composer installs it with this module.
 
 ## Development with DDEV
 

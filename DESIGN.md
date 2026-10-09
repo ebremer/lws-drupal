@@ -58,7 +58,7 @@ These may become later steps; see [§14](#14-open-questions).
 
 - Projecting existing Drupal content (nodes, media, users) as LWS resources. The design leaves a
   seam for it in [§7.4](#74-lws_projection-optional-later).
-- RDF processing: Turtle content negotiation, SPARQL Update `PATCH`, JSON-LD expansion.
+- RDF processing: Turtle content negotiation, SPARQL Update `PATCH`, JSON-LD expansion. (One exception, opt-in: `lws_index` can read the types Turtle and N-Triples content states, after S7.)
 - DPoP (RFC 9449), WebDAV, resumable uploads, Solid/WAC compatibility.
 - Moving resources (proposed upstream in #237).
 - Storages on their own hostnames, one per storage.
@@ -1615,7 +1615,7 @@ with no adapters.
   - **Anonymous agents may search,** and find what is public, rather than being challenged: the
     services are not resources a token unlocks.
 - **Left out:**
-  - types read from content (a MAY): parsing Turtle or JSON-LD is a non-goal ([§1](#1-goals-and-non-goals));
+  - types read from content (a MAY): parsing Turtle or JSON-LD is a non-goal ([§1](#1-goals-and-non-goals)); added later, opt-in, for Turtle and N-Triples (below);
   - `Content-Location` result resources;
   - query formats other than `application/lws-query+json`.
 - **Verified:**
@@ -1666,6 +1666,27 @@ did the same (12 `cantTell`, 31 deadlocks logged). Two causes, both fixed:
   - Touchstone against the MariaDB copy of the dev site, 16 tests at once: before, 181 passed,
     4 failed, 12 `cantTell`; after, 195 passed, 2 failed (the advisory index tests above),
     0 `cantTell`, and InnoDB counted no deadlock in three runs.
+
+**After S7: types read from content.** lws10-index lets a server derive types from a resource's
+representation (a MAY), and then they "MUST be treated identically" to those of `Link` headers.
+Clients of RDF storages often state a type only in the content (`<> a schema:Note`), which the
+other LWS servers tested read and lws-drupal did not.
+
+- **Opt-in:** `lws_index.settings:content_types.enabled`, off by default, on the *Type index*
+  settings tab; `lws_index_update_11001` adds the setting to existing sites, off.
+- **What is read** (`ContentTypes`): `text/turtle` and `application/n-triples` content up to
+  `content_types.max_bytes` (256 KiB), parsed by `pietercolpaert/hardf` (MIT, no dependencies)
+  with the resource's URI as the base. Its types are the IRI objects of `rdf:type` statements
+  whose subject is the resource itself, at most 64. Content that does not parse states none and
+  is stored all the same. JSON-LD is not read: expanding it may fetch remote contexts.
+- **Where they go:** `Indexer::entries()` adds them to the resource's index entries, beside the
+  declared types. They are read as the write is saved, in its transaction, like the rest of the
+  index, so the size limit bounds the cost; they are not added to the linkset (a content `PUT`
+  does not change metadata, LWS Core). `drush lws:index:rebuild` reads stored content anew.
+- **Verified:** Touchstone against the MariaDB copy of the dev site, with the setting on:
+  `type-search-type-from-content` passes, 196 passed, 1 failed, 0 `cantTell`. The failure is
+  `type-search-reflects-update`, which changes a type set by a `Link` header at creation with a
+  `PUT` that has no `Prefer: set-linkset`; core keeps the linkset, so the old type stays.
 
 **S8.** This is `lws_projection`, optional ([§7](#7-optional-modules)).
 

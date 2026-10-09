@@ -14,8 +14,9 @@ use Ebremer\Lws\LinkRelation;
 /**
  * Keeps the index of resource types and links that searches look up.
  *
- * The index holds, for each resource, its types (its LWS class and those its
- * clients declared) and the targets of every other relation its clients set
+ * The index holds, for each resource, its types (its LWS class, those its
+ * clients declared, and, when enabled, those its RDF content states:
+ * ContentTypes) and the targets of every other relation its clients set
  * (lws10-index, "Type and Relation Derivation"). Which of those relations a
  * search may filter on is settled when it runs (Relations), so changing the
  * setting needs no rebuild.
@@ -51,6 +52,7 @@ final class Indexer {
     private readonly Connection $database,
     private readonly ResourceLinks $links,
     private readonly EntityTypeManagerInterface $entityTypeManager,
+    private readonly ContentTypes $contentTypes,
   ) {}
 
   /**
@@ -89,6 +91,10 @@ final class Indexer {
       }
     };
     foreach ($this->links->types($resource) as $type) {
+      $add(LinkRelation::TYPE, $type);
+    }
+    // Types its content states count as declared ones (ContentTypes).
+    foreach ($this->contentTypes->of($resource) as $type) {
       $add(LinkRelation::TYPE, $type);
     }
     foreach ($resource->getUserMetadata()->links as $rel => $targets) {

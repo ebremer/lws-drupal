@@ -2,7 +2,7 @@
 
 /**
  * @file
- * Install functions for LWS Type Index.
+ * Install and update functions for LWS Type Index.
  */
 
 declare(strict_types=1);
@@ -67,4 +67,16 @@ function lws_index_schema(): array {
  */
 function lws_index_install(bool $is_syncing): void {
   \Drupal::service('lws_index.indexer')->rebuild();
+}
+
+/**
+ * Adds the setting to read types from content, off.
+ */
+function lws_index_update_11001(): string {
+  $settings = \Drupal::configFactory()->getEditable('lws_index.settings');
+  if ($settings->get('content_types') !== NULL) {
+    return 'The setting to read types from content was already there.';
+  }
+  $settings->set('content_types', ['enabled' => FALSE, 'max_bytes' => 262144])->save();
+  return 'Types can now be read from Turtle and N-Triples content: turn it on in the type index settings, then run drush lws:index:rebuild.';
 }

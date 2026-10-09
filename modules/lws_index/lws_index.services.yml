@@ -1,8 +1,14 @@
 services:
   lws_index.indexer:
     class: Drupal\lws_index\Indexer
-    arguments: ['@database', '@lws_storage.resource_links', '@entity_type.manager']
+    arguments: ['@database', '@lws_storage.resource_links', '@entity_type.manager', '@lws_index.content_types']
   Drupal\lws_index\Indexer: '@lws_index.indexer'
+
+  # The types RDF content states, for the index (off unless content_types.enabled).
+  lws_index.content_types:
+    class: Drupal\lws_index\ContentTypes
+    arguments: ['@config.factory', '@lws_storage.resource_links', '@entity_type.manager', '@logger.channel.lws']
+  Drupal\lws_index\ContentTypes: '@lws_index.content_types'
 
   lws_index.relations:
     class: Drupal\lws_index\Relations

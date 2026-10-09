@@ -24,7 +24,8 @@
         "php": ">=8.3",
         "ext-zlib": "*",
         "drupal/core": "^11.3",
-        "ebremer/lws-client": "dev-main"
+        "ebremer/lws-client": "dev-main",
+        "pietercolpaert/hardf": "^0.6"
     },
     "extra": {
         "installer-name": "lws"

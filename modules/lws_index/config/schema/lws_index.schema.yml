@@ -8,3 +8,16 @@ lws_index.settings:
       sequence:
         type: string
         label: 'Relation'
+    content_types:
+      type: mapping
+      label: 'Types read from content'
+      mapping:
+        enabled:
+          type: boolean
+          label: 'Read the types Turtle and N-Triples content states about the resource itself'
+        max_bytes:
+          type: integer
+          label: 'The largest content read, in bytes'
+          constraints:
+            Range:
+              min: 0

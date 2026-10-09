@@ -6,3 +6,9 @@ relations:
   - license
   - profile
   - related
+# Read the types that Turtle and N-Triples content states about the resource
+# itself ("<> a <...>"), as lws10-index allows. Off by default: it parses
+# client content, up to max_bytes, as each resource is saved.
+content_types:
+  enabled: false
+  max_bytes: 262144
