@@ -80,9 +80,10 @@ final class StorageManagerTest extends LwsStorageKernelTestBase {
     $this->assertSame(2, $this->resources->findByPath($storage, 'root/Notes/')?->getVersion());
     $this->assertSame(1, $this->resources->findByPath($storage, 'root/Notes/Café menu/')?->getVersion());
 
-    // Names are case-sensitive.
+    // Names are case-sensitive. Their order is the database's collation:
+    // PostgreSQL's puts "notes/" first.
     $this->storages->createContainer($root, 'notes');
-    $this->assertSame(
+    $this->assertEqualsCanonicalizing(
       ['Notes/', 'notes/'],
       array_map(static fn ($r) => $r->getName(), $this->resources->children($this->resources->root($storage))),
     );

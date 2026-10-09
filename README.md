@@ -367,6 +367,11 @@ cd drupal
 SIMPLETEST_DB=sqlite://localhost//tmp/lws-test.sqlite vendor/bin/phpunit -c web/core web/modules/contrib/lws
 ```
 
+CI runs the tests on SQLite, and again on MySQL 8.4, MariaDB 11.8 and
+PostgreSQL 17. To do the same, point `SIMPLETEST_DB` at an empty database,
+such as `mysql://root:secret@127.0.0.1/lws_test` or
+`pgsql://postgres:secret@127.0.0.1/lws_test`.
+
 ## Deployment notes
 
 - **Set the canonical base URL** at *Configuration › Web services › Linked Web

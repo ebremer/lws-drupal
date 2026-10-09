@@ -45,3 +45,78 @@ jobs:
           SIMPLETEST_DB: sqlite://localhost//tmp/lws-test.sqlite
           SIMPLETEST_BASE_URL: http://localhost
         run: vendor/bin/phpunit -c web/core web/modules/contrib/lws
+
+  # The tests again on the database servers Drupal supports. Row locks,
+  # deadlocks, collations, index prefixes and column sizes differ between them,
+  # and SQLite has none of these.
+  database:
+    name: PHP 8.4, ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # REPEATABLE READ, the server's default, as on sites installed
+          # before Drupal 10.1.
+          - name: MySQL 8.4
+            image: mysql:8.4
+            port: 3306
+            health: mysqladmin ping -h 127.0.0.1 -uroot -proot
+            url: mysql://root:root@127.0.0.1:3306/lws_test
+          # READ COMMITTED, which Drupal's installer has set since 10.1.
+          - name: MariaDB 11.8
+            image: mariadb:11.8
+            port: 3306
+            health: healthcheck.sh --connect --innodb_initialized
+            url: mysql://root:root@127.0.0.1:3306/lws_test
+            prepare: mariadb -uroot -proot -e "SET GLOBAL transaction_isolation = 'READ-COMMITTED'"
+          - name: PostgreSQL 17
+            image: postgres:17
+            port: 5432
+            health: pg_isready -h 127.0.0.1 -U postgres
+            url: pgsql://postgres:root@127.0.0.1:5432/lws_test
+    services:
+      db:
+        image: ${{ matrix.image }}
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: lws_test
+          MARIADB_ROOT_PASSWORD: root
+          MARIADB_DATABASE: lws_test
+          POSTGRES_PASSWORD: root
+          POSTGRES_DB: lws_test
+        ports:
+          - ${{ matrix.port }}:${{ matrix.port }}
+        options: >-
+          --health-cmd "${{ matrix.health }}"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: lws
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: gd, pdo_mysql, pdo_pgsql
+          coverage: none
+          tools: composer:v2
+
+      - name: Prepare the database
+        if: matrix.prepare
+        env:
+          DB: ${{ job.services.db.id }}
+          PREPARE: ${{ matrix.prepare }}
+        run: docker exec "$DB" sh -c "$PREPARE"
+
+      - name: Build a Drupal 11 site around the module
+        run: sh lws/.github/build-site.sh drupal lws
+
+      - name: Unit and kernel tests
+        working-directory: drupal
+        env:
+          SIMPLETEST_DB: ${{ matrix.url }}
+          SIMPLETEST_BASE_URL: http://localhost
+        run: vendor/bin/phpunit -c web/core web/modules/contrib/lws

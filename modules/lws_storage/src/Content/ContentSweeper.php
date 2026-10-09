@@ -43,11 +43,17 @@ final class ContentSweeper {
    */
   public function sweep(): array {
     $directory = $this->content->scheme() . '://' . ContentStore::DIRECTORY;
-    $known = $this->database->select('file_managed', 'f')
-      ->fields('f', ['uri', 'fid'])
-      ->condition('uri', $this->database->escapeLike($directory . '/') . '%', 'LIKE')
-      ->execute()
-      ?->fetchAllKeyed() ?? [];
+    // LIKE ignores case on PostgreSQL and SQLite, where it would also match
+    // another module's "private://LWS/…".
+    $known = array_filter(
+      $this->database->select('file_managed', 'f')
+        ->fields('f', ['uri', 'fid'])
+        ->condition('uri', $this->database->escapeLike($directory . '/') . '%', 'LIKE')
+        ->execute()
+        ?->fetchAllKeyed() ?? [],
+      static fn ($uri): bool => str_starts_with((string) $uri, $directory . '/'),
+      ARRAY_FILTER_USE_KEY,
+    );
 
     $files = 0;
     $storage = $this->entityTypeManager->getStorage('file');

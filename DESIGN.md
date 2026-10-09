@@ -348,7 +348,8 @@ transaction that changes its membership, so concurrent creates in one container 
 
 A custom `SqlContentEntityStorageSchema` adds the unique and prefix indexes. Name and path columns
 use `'binary' => TRUE`, so on MySQL they get `utf8mb4_bin`: LWS URIs are case-sensitive, and the
-default collation is not.
+default collation is not. PostgreSQL compares case-sensitively anyway, but orders by the
+database's collation rather than by bytes, so members may be listed in another order there.
 
 `content` uses core's `file` field type rather than a plain entity reference. Core then tracks file
 usage whenever a resource is saved or deleted, and Views can relate resources to their files.
@@ -1125,9 +1126,7 @@ Since then, S1 added the settings form and `hook_requirements()`, A1 the seams, 
 and the CORS subscriber, S2 `Preconditions`, and S3 `PaginationCursor`. Q4 was decided for using `lws-client` directly,
 with no adapters.
 
-**Still to do in Step 0:**
-
-- the MySQL and PostgreSQL CI matrix.
+The MySQL, MariaDB and PostgreSQL CI followed after S7 ("After S7: the database CI", below).
 
 ### Storage module steps
 
@@ -1688,6 +1687,29 @@ other LWS servers tested read and lws-drupal did not.
   `type-search-reflects-update`, which changes a type set by a `Link` header at creation with a
   `PUT` that has no `Prefer: set-linkset`; core keeps the linkset, so the old type stays.
 
+**After S7: the database CI.** Step 0 left CI on SQLite alone.
+
+- **CI:** a `database` job runs the tests again on PHP 8.4 against three servers. MySQL 8.4 keeps
+  its default, `REPEATABLE READ`, as on sites installed before Drupal 10.1. MariaDB 11.8 is set to
+  `READ COMMITTED`, as Drupal's installer sets it. PostgreSQL 17 is the third.
+- **Found:**
+  - **The content sweeper.** `ContentSweeper` chose the file entities it may delete with
+    `LIKE 'private://lws/%'`. That ignores case on PostgreSQL, where Drupal makes it `ILIKE`, and
+    on SQLite, so another module's unused `private://LWS/…` file would have been deleted. The
+    URIs are now matched exactly after the query.
+  - **Member order on PostgreSQL.** PostgreSQL orders container members by the database's
+    collation (`en_US.utf8` in the official image), not by bytes, so `notes/` comes before
+    `Notes/`. Its columns have no binary option, so `'binary' => TRUE` changes nothing there, and
+    comparisons stay case-sensitive. Listings and their cursors compare names only in the
+    database, so pages agree with either order, and LWS defines none. One test assumed byte
+    order.
+  - Nothing else. The row locks, the retries after a deadlock, the 64-bit times and the index
+    queries (a correlated `EXISTS`, `DISTINCT` ordered by an alias, `LIKE` on path prefixes) pass
+    on all three servers.
+- **Verified:** 657 tests pass on each of SQLite, MySQL 8.4, MariaDB 11.8 and PostgreSQL 17, in
+  Docker, and phpcs and phpstan (level 8) are clean. The workflow itself had not run on GitHub
+  when this was written.
+
 **S8.** This is `lws_projection`, optional ([§7](#7-optional-modules)).
 
 ### Authorization module steps
@@ -2059,7 +2081,7 @@ the start. Nothing gets a temporary "open" mode that later has to be removed.
 | Layer | Tooling | Covers |
 |---|---|---|
 | Unit | PHPUnit (`UnitTestCase`) | Path parser, preconditions, cursors, JSON Patch, policy evaluator, constraint operators, JWT claim checks, SSRF guard, ETag derivation |
-| Kernel | `KernelTestBase` (SQLite and MySQL) | Entity schema and indexes, containment integrity, transactions and rollback of content files, file usage and clean-up of superseded files, `hook_file_download()` denial, policy storage, grant ⇄ policy atomicity |
+| Kernel | `KernelTestBase` (SQLite, MySQL, MariaDB and PostgreSQL) | Entity schema and indexes, containment integrity, transactions and rollback of content files, file usage and clean-up of superseded files, `hook_file_download()` denial, policy storage, grant ⇄ policy atomicity |
 | Functional | `BrowserTestBase` + Guzzle (as JSON:API's tests do) | Every row of [§5.2](#52-operations) and [§6](#6-authorization-module-lws_authz); headers checked exactly |
 | Golden samples | `lws-client/conformance/fixtures/responses/*.json` | The server's storage description, container page, linkset, OAuth and problem responses have the shapes the clients expect |
 | Client end-to-end | `ebremer/lws-client` (dev dependency): `php/examples/quickstart.php`, `php/tests/InteropTest.php` | The 13-step interop scenario against a DDEV site. The URL layout ([§4.1](#41-layout)) matches the mock server's, so the scenario runs unchanged |

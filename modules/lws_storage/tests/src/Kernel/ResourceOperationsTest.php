@@ -516,12 +516,16 @@ final class ResourceOperationsTest extends LwsStorageKernelTestBase {
     $unused = $files->create(['uri' => $directory . '/unused', 'status' => 1]);
     file_put_contents($directory . '/unused', 'x');
     $unused->save();
+    // Another module's, which a match that ignores case would take for one.
+    $elsewhere = $files->create(['uri' => 'private://LWS/elsewhere', 'status' => 1]);
+    $elsewhere->save();
 
     $this->assertSame(['files' => 1, 'bytes' => 1], $this->container->get('lws_storage.content_sweeper')->sweep());
     $this->assertFileExists($kept);
     $this->assertFileExists($recent);
     $this->assertFileDoesNotExist($old);
     $this->assertFileDoesNotExist($directory . '/unused');
+    $this->assertNotNull($files->load((int) $elsewhere->id()));
   }
 
 }
