@@ -158,7 +158,7 @@ final class LwsAuthzCommands extends DrushCommands {
   #[CLI\Option(name: 'jwks', description: 'A file with the JSON Web Key Set of its signing keys, to pin them. Without it, they are discovered.')]
   #[CLI\Option(name: 'any-audience', description: 'Accept ID Tokens that do not name this authorization server in "aud", if they name their "azp".')]
   #[CLI\Option(name: 'any-subject', description: 'Trust it for any subject, without dereferencing the subject\'s document.')]
-  #[CLI\Usage(name: 'drush lws:op:add halcyon https://ebremer.com/auth/realms/Halcyon --any-audience', description: 'Trusts that Keycloak realm for the subjects whose documents name it, though its ID Tokens do not name this site.')]
+  #[CLI\Usage(name: 'drush lws:op:add keycloak https://idp.example/realms/main --any-audience', description: 'Trusts that Keycloak realm for the subjects whose documents name it, though its ID Tokens do not name this site.')]
   public function addProvider(
     string $id,
     string $issuer,

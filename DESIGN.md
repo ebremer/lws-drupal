@@ -2008,14 +2008,14 @@ the plan above:
   - **Setup.** The suite is on for new sites. Update hook `lws_authz_update_11003` adds its
     settings but leaves it off on existing ones.
 - **Built differently:**
-  - **The provider for the end-to-end test** is the deployed ebremer.com Keycloak (realm
-    `Halcyon`, client `https://ebremer.com/id/lws-client`), used as is: nothing was configured on
-    it. It is not one in DDEV. Its ID Tokens name `https://ebremer.com/lws` and their client, not
-    this site, so the development site trusts it with `--any-audience`.
+  - **The provider for the end-to-end test** is a deployed Keycloak, an existing realm and
+    client used as they are: nothing was configured on it. It is not one in DDEV. Its ID Tokens
+    name its own deployment and their client, not this site, so the development site trusts it
+    with `--any-audience`.
 - **Verified:**
   - Touchstone `auth/oidc` 6/6, `auth/cid` 22/22, and `core` as after S5;
   - from the development site, the realm's RS256 key is discovered through the outbound guard,
-    and `https://ebremer.com/id/erich` names the realm;
+    and an agent's identity document served beside it names the realm;
   - 517 tests; phpcs and phpstan (level 8) are clean;
   - `lws-client`: 193 tests; phpstan clean.
 - **Left out:** SAML (above); Q6 and Q7 are unchanged.

@@ -280,7 +280,7 @@ An ID Token is accepted from a provider in either of two ways:
     (`--any-subject`).
 
 ```sh
-drush lws:op:add halcyon https://ebremer.com/auth/realms/Halcyon --any-audience
+drush lws:op:add keycloak https://idp.example/realms/main --any-audience
 ```
 
 The keys of the providers are verified as ES256, ES384, EdDSA or, for providers
