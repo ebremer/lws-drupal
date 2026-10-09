@@ -12,14 +12,15 @@ is in [DESIGN.md](DESIGN.md).
 | `lws_storage` | Storages and their resources: the storage description, containers, data resources, linksets, the administration pages, Drush commands |
 | `lws_notify` | Notifications: the notification service, webhook subscriptions, and signed deliveries of changes and of access requests and grants (optional) |
 | `lws_index` | The type index and type search services: the types of what an agent may read, and the resources that match a filter on types and links (optional) |
+| `lws_identity` | Agent identities for Drupal users: an agent URI with a controlled identifier document naming their keys and OpenID Providers, and optionally a storage each (optional) |
 
 ## Status
 
-**Step S7, the type index** (DESIGN.md §10), after S1, storages, A1, access
+**Step I1, agent identities** (DESIGN.md §10), after S1, storages, A1, access
 tokens, S2, data resources, S3, pagination, S4, metadata and JSON Patch, A2, the
 authorization server, A3, access policies, A4, access requests and grants, S5,
-hardening and the administration pages, A5, OpenID Connect, and S6,
-notifications. Storages are created at *Content ›
+hardening and the administration pages, A5, OpenID Connect, S6,
+notifications, and S7, the type index. Storages are created at *Content ›
 LWS storages* or with Drush; everything in them is managed over HTTP, with
 access tokens the site issues itself, for self-signed credentials or OpenID
 Connect ID Tokens, by their controllers and by the agents their access policies
@@ -46,6 +47,7 @@ allow:
 | `DELETE` a subscription | Cancels it (its agent or a controller) |
 | `GET /lws/{storage}/types/index` | With `lws_index`: the distinct types of the resources the agent may read, as a paged `TypeIndex` ([Type index and search](#type-index-and-search)) |
 | `QUERY /lws/{storage}/types/search` | With `lws_index`: the resources the agent may read that match an `application/lws-query+json` filter on types and links, as a paged `ContainerPage` |
+| `GET /lws/agents/{uuid}` | With `lws_identity`: an agent's controlled identifier document (`application/cid`, or `ld+json`/`json`), to anyone ([Agent identities](#agent-identities)) |
 | `GET /.well-known/lws-configuration` | The authorization server's metadata (RFC 8414) |
 | `POST /lws/oauth/token` | Token exchange (RFC 8693): a self-signed credential or an OpenID Connect ID Token for an access token to a storage |
 | `GET /lws/oauth/jwks` | The keys that sign access tokens |
@@ -88,7 +90,8 @@ drush lws:gc                                           # sweep unreferenced cont
 | `/admin/content/lws/{id}/resources` | A read-only resource browser, which is a View (`lws_resources`, with Views): path, kind, media type, size, creator, and *Download* and *Create media item* |
 | `/admin/content/lws/{id}/subscriptions` | With `lws_notify`: who subscribed to what, where it is delivered, and how deliveries fare; *Cancel* |
 | `/admin/content/lws/{id}/delete` | Deletes it with everything in it; a large storage is blocked first and emptied in a batch |
-| *Configuration › Web services › Linked Web Storage* | The base URL, path prefix and concealment; on the *Storages* tab, where content goes, the largest content, the largest recursive delete, the page size and whether changes need `If-Match`; on the *Notifications* tab, whether activities name their actor, the limits on subscriptions, and how deliveries are made and retried; on the *Type index* tab, the relations searches may filter on |
+| `/user/{uid}/lws-identity` | With `lws_identity`: the user's agent URI and keys; *Add a key*, *Remove*. For the user, with *Manage own LWS agent keys*, and for administrators of agents |
+| *Configuration › Web services › Linked Web Storage* | The base URL, path prefix and concealment; on the *Storages* tab, where content goes, the largest content, the largest recursive delete, the page size and whether changes need `If-Match`; on the *Notifications* tab, whether activities name their actor, the limits on subscriptions, and how deliveries are made and retried; on the *Type index* tab, the relations searches may filter on; on the *Agent identities* tab, the OpenID Providers agents' documents name and whether each new agent gets a storage |
 
 *Create media item* (with Media) copies a data resource's content into a new,
 unpublished Media item of a type made from a file. The copy is the site's: later
@@ -240,6 +243,51 @@ Content-Type: application/lws-query+json
 
 ```sh
 drush lws:index:rebuild                    # index every resource again
+```
+
+## Agent identities
+
+With `lws_identity` enabled, users with the *Have an LWS agent identity*
+permission have an agent: an agent URI,
+`https://site.example/lws/agents/{user UUID}`, by which LWS storages here and
+elsewhere know them. It serves a controlled identifier document (CID 1.0,
+`application/cid`, or `ld+json`/`json` by `Accept`) to anyone, and says nothing
+about the user but:
+
+- **Keys,** for self-signed credentials
+  ([lws10-authn-ssi-cid](https://www.w3.org/TR/lws10-authn-ssi-cid/)): the
+  public keys the user adds on the *LWS identity* tab of their account, with
+  *Manage own LWS agent keys*, or that Drush adds, as `JsonWebKey`
+  verification methods, `{agent URI}#{key ID}`. EC P-256 and P-384, Ed25519,
+  and RSA of 2048 bits or more, up to 16; a private key is refused. A key may
+  expire. A program that holds one signs a JWT whose `sub`, `iss` and
+  `client_id` are the agent URI, whose `aud` is the authorization server and
+  whose `kid` is the key ID, and exchanges it for an access token.
+- **OpenID Providers** ([lws10-authn-openid](https://www.w3.org/TR/lws10-authn-openid/)),
+  from the *Agent identities* settings tab: every agent's document names them
+  as `lws:OpenIdProvider` services, so an ID Token one of them issues with the
+  agent URI as `sub` stands for the agent. List only providers that issue such
+  tokens for this site's users. Drupal is not an OpenID Provider itself.
+
+This site's authorization server reads its own agents' documents directly,
+never over HTTP and never cached: a key removed, or an account blocked, stops
+working here at once, and elsewhere when the document is next read. An account
+that is blocked or loses the permission has no document (`404`), and its keys
+go when it is deleted.
+
+**A storage for each agent,** if the settings turn it on
+(`lws_identity.settings:provisioning.storage`; off by default; it needs
+`lws_storage` and the canonical base URL): when an account first has an agent,
+it gets a storage named after the user, such as `/lws/zoe-smith/`, controlled
+by the agent and owned by the user. Only once: a storage an administrator
+deletes is not made again, unless `drush lws:agent:provision` asks for it.
+
+```sh
+drush lws:agent:show alice                          # the agent URI and its keys
+drush lws:agent:key-add alice key.pub.json --label=laptop --expires=2027-01-01
+drush lws:agent:key-generate alice --label=bot > alice.jwk  # the private JWK is printed once, never stored
+drush lws:agent:key-delete alice <kid>
+drush lws:agent:provision alice                     # a storage for the agent
 ```
 
 ## Access tokens

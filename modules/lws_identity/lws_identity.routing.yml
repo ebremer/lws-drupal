@@ -1,0 +1,56 @@
+# Agent documents live in the LWS URL space, at {prefix}/agents/{uuid}, the
+# reserved segment "agents"; AgentRoutes builds that route, as the prefix is
+# configurable.
+route_callbacks:
+  - '\Drupal\lws_identity\Routing\AgentRoutes::routes'
+
+lws_identity.settings:
+  path: '/admin/config/services/lws/identity'
+  defaults:
+    _form: '\Drupal\lws_identity\Form\IdentitySettingsForm'
+    _title: 'Agent identities'
+  requirements:
+    _permission: 'administer lws'
+
+# A user's agent: its URI, its keys and its OpenID Providers.
+lws_identity.user:
+  path: '/user/{user}/lws-identity'
+  defaults:
+    _controller: '\Drupal\lws_identity\Controller\AgentIdentityController::page'
+    _title: 'LWS identity'
+  requirements:
+    _custom_access: '\Drupal\lws_identity\Access\AgentKeysAccess::access'
+    user: \d+
+  options:
+    parameters:
+      user:
+        type: entity:user
+
+lws_identity.key_add:
+  path: '/user/{user}/lws-identity/keys/add'
+  defaults:
+    _form: '\Drupal\lws_identity\Form\AgentKeyAddForm'
+    _title: 'Add a key'
+  requirements:
+    _custom_access: '\Drupal\lws_identity\Access\AgentKeysAccess::access'
+    user: \d+
+  options:
+    parameters:
+      user:
+        type: entity:user
+
+lws_identity.key_delete:
+  path: '/user/{user}/lws-identity/keys/{lws_agent_key}/delete'
+  defaults:
+    _form: '\Drupal\lws_identity\Form\AgentKeyDeleteForm'
+    _title: 'Remove a key'
+  requirements:
+    _custom_access: '\Drupal\lws_identity\Access\AgentKeysAccess::access'
+    user: \d+
+    lws_agent_key: \d+
+  options:
+    parameters:
+      user:
+        type: entity:user
+      lws_agent_key:
+        type: entity:lws_agent_key

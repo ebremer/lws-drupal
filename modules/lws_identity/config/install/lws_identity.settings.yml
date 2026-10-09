@@ -1,0 +1,8 @@
+# The OpenID Providers every agent's document names (lws10-authn-openid §5).
+# An ID Token from one of them whose "sub" is an agent URI then stands for that
+# agent, so list only providers that issue such tokens for this site's users.
+openid_providers: []
+# Create a storage for each new user who has an agent identity, controlled by
+# that agent and owned by the user.
+provisioning:
+  storage: false

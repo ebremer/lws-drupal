@@ -925,6 +925,9 @@ This makes Drupal a *complete* LWS stack, as the Keycloak `lws-authn` extension 
   as controller. With `lws_agent_users` enabled, that URI is also linked to the user in the
   authmap, so tokens for it act as that user.
 
+Built in step I1 ([§10](#10-implementation-plan)), with two changes: the OpenID Providers are a
+list the site configures, as Drupal is not one, and the authmap link waits for `lws_agent_users`.
+
 ### 7.4 `lws_projection` (optional, later)
 
 Exposes selected Drupal entity bundles as **read-only** LWS containers, so that nodes, media and
@@ -2042,7 +2045,65 @@ the plan above:
   - `lws-client`: 193 tests; phpstan clean.
 - **Left out:** SAML (above); Q6 and Q7 are unchanged.
 
-**A6 (optional).** DPoP-bound tokens, and the `lws_identity` module (I1).
+**A6 (optional).** DPoP-bound tokens.
+
+**I1 (optional). `lws_identity`: Drupal users as LWS agents** ([§7.3](#73-lws_identity-drupal-users-as-lws-agents)).
+
+**Done** (decided 2026-10-09: an optional module, Q3). Differences from §7.3:
+
+- **Built as planned:**
+  - **Agent URIs:** `{base URL}{prefix}/agents/{user UUID}`, the reserved segment `agents`, for
+    active accounts with the *Have an LWS agent identity* permission (`use lws agent identity`).
+    A UUID cannot be enumerated and survives a rename. Any other account, or UUID, is a `404`
+    problem.
+  - **The document** (`AgentDocuments`): `@context` CID v1, `id`, the agent's keys as `JsonWebKey`
+    methods of `authentication` (`{agent}#{kid}`, `controller`, `publicKeyJwk`, and `expires` for
+    a key that expires), and `service` entries of type `lws:OpenIdProvider`. Nothing else about
+    the user. Served as `application/cid`, `application/ld+json` or `application/json`, the same
+    body, and as `application/cid` for any other `Accept` rather than a `406`: verifiers ask with
+    many. A strong `ETag` and `no-cache`, so `304`s are cheap and a removed key is gone for anyone
+    who revalidates; never in the page cache; CORS as for the rest of the URL space.
+  - **Keys** (`lws_agent_key`, `AgentKeys`): public JWKs of the types the SSI-CID suite verifies
+    (EC P-256 and P-384, Ed25519, RSA of 2048 bits or more), up to 16 per agent. Private members,
+    JWK Sets, `use` other than `sig`, `key_ops` without `verify`, and an `alg` the key cannot
+    sign with are refused; only the public members, `alg` and `kid` are kept. The key ID is the
+    JWK's `kid` if it is 1 to 64 unreserved characters, else its RFC 7638 thumbprint, and is
+    unique per agent, as is the key itself. `expires` is a big integer (not a 32-bit core
+    timestamp, after S7's MySQL findings).
+  - **Provisioning** (`Provisioner`, off by default): when an account first has an agent, a
+    storage named after the user (transliterated, `-2`… for a taken or reserved slug), with the
+    agent URI as controller and the user as owner. It runs on `user_insert` and `user_update`, so
+    an account approved or given the permission later gets one then, and records it in user data,
+    so a storage an administrator deletes is not made again. It needs the configured base URL:
+    the storage records the agent URI.
+- **Built differently:**
+  - **OpenID Providers are configured** (`lws_identity.settings:openid_providers`), rather than
+    the site's own. `simple_oauth` cannot be an LWS OpenID Provider as it is: its ID Tokens name
+    the user ID as `sub`, and its client IDs are not URIs, which LWS needs as `azp`. A listed
+    provider must issue ID Tokens whose `sub` is the agent URI. Keycloak with `lws-authn` can: its
+    subject mapper reads it from a user attribute, which only administrators may write.
+  - **Local resolution.** `lws_authz`'s `DocumentResolver` reads documents under this site's
+    agents segment through `LocalDocumentsInterface`, which `lws_identity` provides as the service
+    of that name, rather than over HTTP. A request from the site to itself passes the outbound
+    guard only on a public address, and holds a second PHP worker while the first waits. They are
+    not cached, so a key removed or an account blocked stops working here at once. `lws_authz`
+    does not depend on `lws_identity`: without it the argument is NULL.
+  - **No authmap link:** that is `lws_agent_users` (U1), not built.
+- **Also built:** the *LWS identity* tab on the user page (`/user/{uid}/lws-identity`: the agent
+  URI, the keys, *Add a key*, *Remove*), for the user with *Manage own LWS agent keys* while they
+  have an agent, and for *Administer LWS agents*; the *Agent identities* settings tab; Drush
+  commands `lws:agent:show`, `lws:agent:key-add`, `lws:agent:key-generate` (which prints the
+  private JWK once and stores only the public key), `lws:agent:key-delete` and
+  `lws:agent:provision`. A user's keys are deleted with the account; a storage it controlled stays.
+- **Verified:**
+  - kernel tests of the document, its serving, local resolution, key rules, provisioning, the
+    pages' access and the key forms, and a sign-in: an agent's self-signed credential exchanged
+    at this site's authorization server for a token to a storage it controls, with no HTTP
+    request, refused once the key is removed, has expired, or the account is blocked;
+  - on the development site, through Apache: the document, a `404` for an unknown agent, a
+    provisioned storage, and the same sign-in with a key from `lws:agent:key-generate`, over HTTP;
+  - 686 tests (29 of them new) pass on SQLite, MySQL 8.4, MariaDB 11.8 and PostgreSQL 17, and phpcs
+    and phpstan (level 8) are clean.
 
 **U1 (optional add-on). `lws_agent_users`.**
 
@@ -2171,7 +2232,9 @@ makes. Where `lws-server` (the Java implementation) chose differently, that is n
    per Drupal user automatically (needs `lws_identity`)?
 3. **Q3. Should Drupal also be an identity provider?** `lws_identity` (CID documents for users,
    with OpenID through `simple_oauth`) would make the site a complete stack. Is that in scope, or
-   is the Keycloak `lws-authn` the IdP?
+   is the Keycloak `lws-authn` the IdP? *Decided 2026-10-09: `lws_identity`, as an optional
+   module* (step I1): agent URIs, documents and keys, with OpenID through providers the site
+   configures, such as Keycloak `lws-authn`, as Drupal itself is not one.
 4. **Q4. Coupling to `ebremer/lws-client`.** *Decided 2026-10-08: reuse it.* `JsonPatch::apply()`
    was added with S4, RSA verification with A5, and a `WebhookSigner` with S6. The client still
    needs a tagged release on Packagist (before a drupal.org release).

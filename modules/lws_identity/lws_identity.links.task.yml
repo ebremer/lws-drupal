@@ -1,0 +1,11 @@
+lws_identity.settings:
+  title: 'Agent identities'
+  route_name: lws_identity.settings
+  base_route: lws.settings
+  weight: 40
+
+lws_identity.user:
+  title: 'LWS identity'
+  route_name: lws_identity.user
+  base_route: entity.user.canonical
+  weight: 20

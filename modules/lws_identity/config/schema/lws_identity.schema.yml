@@ -1,0 +1,17 @@
+lws_identity.settings:
+  type: config_object
+  label: 'LWS identity settings'
+  mapping:
+    openid_providers:
+      type: sequence
+      label: 'The OpenID Providers agent documents name'
+      sequence:
+        type: uri
+        label: 'Issuer identifier'
+    provisioning:
+      type: mapping
+      label: 'Provisioning'
+      mapping:
+        storage:
+          type: boolean
+          label: 'Create a storage for each new user with an agent identity'

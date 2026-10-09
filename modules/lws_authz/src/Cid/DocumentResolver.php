@@ -21,6 +21,10 @@ use Psr\Log\LoggerInterface;
  * for five minutes, and failures for one, which bounds how often any one URL
  * is fetched; the token endpoint's flood control bounds the rest. The cost is
  * that a key the subject revokes stays usable here until the entry expires.
+ *
+ * Documents this site serves itself (LocalDocumentsInterface, from
+ * lws_identity) are read directly and never cached, so a key removed from
+ * one stops working here at once.
  */
 final class DocumentResolver {
 
@@ -44,6 +48,7 @@ final class DocumentResolver {
     private readonly CacheBackendInterface $cache,
     private readonly TimeInterface $time,
     private readonly LoggerInterface $logger,
+    private readonly ?LocalDocumentsInterface $local = NULL,
   ) {}
 
   /**
@@ -85,6 +90,9 @@ final class DocumentResolver {
    * @throws \Drupal\lws_authz\Cid\UnresolvableSubjectException
    */
   private function fetch(string $url): array {
+    if ($this->local?->serves($url)) {
+      return $this->local->document($url) ?? throw new UnresolvableSubjectException('This site has no controlled identifier document for the subject.');
+    }
     $cid = 'cid_document:' . hash('sha256', $url);
     $cached = $this->cache->get($cid);
     if ($cached !== FALSE && is_array($cached->data)) {

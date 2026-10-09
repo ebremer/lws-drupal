@@ -1,0 +1,10 @@
+use lws agent identity:
+  title: 'Have an LWS agent identity'
+  description: 'Get an agent URI, whose controlled identifier document names the keys and OpenID Providers the user authenticates with at LWS storages.'
+manage own lws agent keys:
+  title: 'Manage own LWS agent keys'
+  description: 'Add and remove the public keys the user signs self-issued LWS credentials with.'
+administer lws agents:
+  title: 'Administer LWS agents'
+  description: 'See every user&rsquo;s agent URI, and add and remove anyone&rsquo;s keys, which lets the holder of a key act as that user&rsquo;s agent.'
+  restrict access: true

@@ -45,7 +45,13 @@ services:
 
   lws_authz.cid_resolver:
     class: Drupal\lws_authz\Cid\DocumentResolver
-    arguments: ['@lws.outbound_http', '@cache.lws', '@datetime.time', '@logger.channel.lws_authz']
+    arguments:
+      - '@lws.outbound_http'
+      - '@cache.lws'
+      - '@datetime.time'
+      - '@logger.channel.lws_authz'
+      # Provided by lws_identity: the documents of this site's own agents.
+      - '@?Drupal\lws_authz\Cid\LocalDocumentsInterface'
   Drupal\lws_authz\Cid\DocumentResolver: '@lws_authz.cid_resolver'
 
   lws_authz.keys:

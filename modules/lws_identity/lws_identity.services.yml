@@ -1,0 +1,34 @@
+services:
+  logger.channel.lws_identity:
+    parent: logger.channel_base
+    arguments: ['lws_identity']
+
+  lws_identity.agent_uris:
+    class: Drupal\lws_identity\AgentUris
+    arguments: ['@lws.url_generator', '@lws.url_parser']
+  Drupal\lws_identity\AgentUris: '@lws_identity.agent_uris'
+
+  lws_identity.agent_keys:
+    class: Drupal\lws_identity\AgentKeys
+    arguments: ['@entity_type.manager', '@datetime.time']
+  Drupal\lws_identity\AgentKeys: '@lws_identity.agent_keys'
+
+  # Also what lws_authz's DocumentResolver reads this site's agents from.
+  lws_identity.agent_documents:
+    class: Drupal\lws_identity\AgentDocuments
+    arguments: ['@lws_identity.agent_uris', '@lws_identity.agent_keys', '@entity_type.manager', '@config.factory']
+  Drupal\lws_identity\AgentDocuments: '@lws_identity.agent_documents'
+  Drupal\lws_authz\Cid\LocalDocumentsInterface: '@lws_identity.agent_documents'
+
+  lws_identity.provisioner:
+    class: Drupal\lws_identity\Provisioner
+    arguments:
+      - '@config.factory'
+      - '@lws_identity.agent_uris'
+      - '@entity_type.manager'
+      - '@user.data'
+      - '@transliteration'
+      - '@logger.channel.lws_identity'
+      # Provided by lws_storage; without it there are no storages to create.
+      - '@?lws_storage.storage_manager'
+  Drupal\lws_identity\Provisioner: '@lws_identity.provisioner'

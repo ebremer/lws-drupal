@@ -1,0 +1,5 @@
+lws_identity.key_add:
+  route_name: lws_identity.key_add
+  title: 'Add a key'
+  appears_on:
+    - lws_identity.user

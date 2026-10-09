@@ -1,0 +1,10 @@
+name: 'LWS Identity'
+type: module
+description: 'Gives Drupal users W3C Linked Web Storage (LWS) agent identities: an agent URI whose controlled identifier document names the keys and OpenID Providers they authenticate with.'
+package: 'Linked Web Storage'
+core_version_requirement: ^11.3
+configure: lws_identity.settings
+dependencies:
+  - drupal:user
+  - lws:lws
+  - lws:lws_authz
