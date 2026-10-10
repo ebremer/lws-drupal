@@ -14,14 +14,15 @@ is in [DESIGN.md](DESIGN.md).
 | `lws_index` | The type index and type search services: the types of what an agent may read, and the resources that match a filter on types and links (optional) |
 | `lws_identity` | Agent identities for Drupal users: an agent URI with a controlled identifier document naming their keys and OpenID Providers, and optionally a storage each (optional) |
 | `lws_agent_users` | LWS agents as Drupal users: access policies for Drupal roles, blocking an account to bar its agent, a permission to bypass access policies, and optionally an account for every agent (optional; needs `externalauth`) |
+| `lws_projection` | Drupal content as LWS resources: read-only storages of the nodes, media, terms or other content a visitor may view, as JSON, kept up to date (optional) |
 
 ## Status
 
-**Step U1, agent users** (DESIGN.md §10), after S1, storages, A1, access
+**Step S8, projections** (DESIGN.md §10), after S1, storages, A1, access
 tokens, S2, data resources, S3, pagination, S4, metadata and JSON Patch, A2, the
 authorization server, A3, access policies, A4, access requests and grants, S5,
 hardening and the administration pages, A5, OpenID Connect, S6,
-notifications, S7, the type index, and I1, agent identities. Storages are created at *Content ›
+notifications, S7, the type index, I1, agent identities, and U1, agent users. Storages are created at *Content ›
 LWS storages* or with Drush; everything in them is managed over HTTP, with
 access tokens the site issues itself, for self-signed credentials or OpenID
 Connect ID Tokens, by their controllers and by the agents their access policies
@@ -50,6 +51,7 @@ allow:
 | `QUERY /lws/{storage}/types/search` | With `lws_index`: the resources the agent may read that match an `application/lws-query+json` filter on types and links, as a paged `ContainerPage` |
 | `GET /lws/agents/{uuid}` | With `lws_identity`: an agent's controlled identifier document (`application/cid`, or `ld+json`/`json`), to anyone ([Agent identities](#agent-identities)) |
 | `GET /lws/roles/{role}` | With `lws_agent_users`: `404`. A role URI names a Drupal role as the assignee of access policies, and nothing else ([Agent users](#agent-users)) |
+| `GET /lws/{projection}/root/{entity type}/{bundle}/{id}` | With `lws_projection`: an entity a visitor may view, as JSON (`application/json`), in a read-only storage ([Projections](#projections)) |
 | `GET /.well-known/lws-configuration` | The authorization server's metadata (RFC 8414) |
 | `POST /lws/oauth/token` | Token exchange (RFC 8693): a self-signed credential or an OpenID Connect ID Token for an access token to a storage |
 | `GET /lws/oauth/jwks` | The keys that sign access tokens |
@@ -94,7 +96,7 @@ drush lws:gc                                           # sweep unreferenced cont
 | `/admin/content/lws/{id}/delete` | Deletes it with everything in it; a large storage is blocked first and emptied in a batch |
 | `/user/{uid}/lws-identity` | With `lws_identity`: the user's agent URI and keys; *Add a key*, *Remove*. For the user, with *Manage own LWS agent keys*, and for administrators of agents |
 | `/user/{uid}/edit` | With `lws_agent_users`: *LWS agent URI*, the agent that acts as the user, and whether the account was made for one. For administrators of users |
-| *Configuration › Web services › Linked Web Storage* | The base URL, path prefix and concealment; on the *Storages* tab, where content goes, the largest content, the largest recursive delete, the page size and whether changes need `If-Match`; on the *Notifications* tab, whether activities name their actor, the limits on subscriptions, and how deliveries are made and retried; on the *Type index* tab, the relations searches may filter on; on the *Agent identities* tab, the OpenID Providers agents' documents name and whether each new agent gets a storage; on the *Agent users* tab, whether agents without an account get one, within which limits, and when unseen ones go |
+| *Configuration › Web services › Linked Web Storage* | The base URL, path prefix and concealment; on the *Storages* tab, where content goes, the largest content, the largest recursive delete, the page size and whether changes need `If-Match`; on the *Notifications* tab, whether activities name their actor, the limits on subscriptions, and how deliveries are made and retried; on the *Type index* tab, the relations searches may filter on; on the *Agent identities* tab, the OpenID Providers agents' documents name and whether each new agent gets a storage; on the *Agent users* tab, whether agents without an account get one, within which limits, and when unseen ones go; on the *Projections* tab, the projections of Drupal content, each with its storage, the content it holds, the type of each bundle's resources, and whether anyone may read it |
 
 *Create media item* (with Media) copies a data resource's content into a new,
 unpublished Media item of a type made from a file. The copy is the site's: later
@@ -344,6 +346,40 @@ drush lws:agent-users:link bob https://bob.example/profile#me
 drush lws:agent-users:find https://bob.example/profile#me   # the user, its groups, whether it is blocked
 drush lws:agent-users:unlink bob
 drush lws:agent-users:prune                                 # now, rather than at cron
+```
+
+## Projections
+
+With `lws_projection` enabled (it needs core's Serialization module), Drupal
+content can be read over LWS. A projection, on the *Projections* tab of the LWS
+settings, names a storage and the content types, media types, vocabularies or
+other bundles it holds. It makes that storage, read-only, with a container for
+each entity type and bundle, `root/{entity type}/{bundle}/`, holding a JSON
+data resource for each entity a visitor may view, named after its ID, such as
+`/lws/content/root/node/article/12`:
+
+- **As a visitor sees it.** Only what an anonymous visitor may view, with only
+  the fields a visitor may view, serialized as core's REST module serves it
+  (`application/json`). Unpublished content is not there.
+- **Kept up to date.** Saving or deleting an entity changes its resource when
+  the request ends. What did not change is not written again, so entity tags
+  and notifications follow real changes. A change to the anonymous role's
+  permissions, or to the projection, syncs it on cron, and
+  `drush lws:projection:sync` does it at once. Changes that save no entity,
+  such as a path alias, wait for the next sync.
+- **Typed and linked.** A bundle can be given a type URI, such as
+  `https://schema.org/Article`, which its resources declare (`rel="type"`), so
+  the type index finds them. Each resource's linkset links the entity's page as
+  `alternate`.
+- **Read-only.** Every write gets `403`, from controllers too. Who may read is
+  the storage's: *Anyone may read it* adds a public read policy; otherwise its
+  access page and access requests decide, as for any storage.
+- A projection only manages a storage it made itself. Deleting it leaves the
+  storage as an ordinary one, with what was projected.
+
+```sh
+drush lws:projection:sync            # every projection, now
+drush lws:projection:sync content    # one
 ```
 
 ## Access tokens

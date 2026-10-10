@@ -1,0 +1,32 @@
+lws_projection.projection.*:
+  type: config_entity
+  label: 'LWS projection'
+  mapping:
+    id:
+      type: machine_name
+      label: 'ID'
+    label:
+      type: label
+      label: 'Name'
+    slug:
+      type: string
+      label: 'The slug of the storage it makes'
+    public:
+      type: boolean
+      label: 'Anyone may read the storage'
+    bundles:
+      type: sequence
+      label: 'The content it projects'
+      sequence:
+        type: mapping
+        label: 'Entity type and bundle'
+        mapping:
+          entity_type:
+            type: string
+            label: 'Entity type'
+          bundle:
+            type: string
+            label: 'Bundle'
+          type:
+            type: string
+            label: 'The type of its resources, as a URI; empty for none'

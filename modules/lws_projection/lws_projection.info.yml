@@ -1,0 +1,11 @@
+name: 'LWS Projection'
+type: module
+description: 'Projects Drupal content into read-only W3C Linked Web Storage (LWS) storages: each node, media item or term a visitor may see becomes a JSON data resource, kept up to date.'
+package: 'Linked Web Storage'
+core_version_requirement: ^11.3
+configure: entity.lws_projection.collection
+dependencies:
+  - drupal:serialization
+  - lws:lws
+  - lws:lws_authz
+  - lws:lws_storage

@@ -1,0 +1,5 @@
+entity.lws_projection.add_form:
+  route_name: entity.lws_projection.add_form
+  title: 'Add projection'
+  appears_on:
+    - entity.lws_projection.collection

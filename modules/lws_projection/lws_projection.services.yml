@@ -1,0 +1,37 @@
+services:
+  logger.channel.lws_projection:
+    parent: logger.channel_base
+    arguments: ['lws_projection']
+
+  lws_projection.projections:
+    class: Drupal\lws_projection\Projections
+    arguments: ['@entity_type.manager', '@state']
+  Drupal\lws_projection\Projections: '@lws_projection.projections'
+
+  # Projects content into storages, and keeps them up to date (DESIGN.md §7.4).
+  lws_projection.projector:
+    class: Drupal\lws_projection\Projector
+    arguments:
+      - '@entity_type.manager'
+      - '@entity_field.manager'
+      - '@lws_storage.storage_manager'
+      - '@lws_storage.resource_repository'
+      - '@lws_storage.storage_registry'
+      - '@lws_projection.projections'
+      - '@serializer'
+      - '@account_switcher'
+      - '@lws_authz.policy_store'
+      - '@lws_authz.policy_parser'
+      - '@lws.url_generator'
+      - '@queue'
+      - '@logger.channel.lws_projection'
+    tags:
+      - { name: event_subscriber }
+      - { name: needs_destruction }
+  Drupal\lws_projection\Projector: '@lws_projection.projector'
+
+  # Projected storages are read-only, for their controllers too.
+  lws_projection.read_only:
+    class: Drupal\lws_projection\Access\ReadOnlyProjections
+    decorates: lws_authz.access_decision
+    arguments: ['@.inner', '@lws_projection.projections']

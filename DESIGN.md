@@ -56,8 +56,8 @@ specifications define around them.
 
 These may become later steps; see [§14](#14-open-questions).
 
-- Projecting existing Drupal content (nodes, media, users) as LWS resources. The design leaves a
-  seam for it in [§7.4](#74-lws_projection-optional-later).
+- Projecting existing Drupal content (nodes, media, users) as LWS resources. *Built after all, as
+  the optional `lws_projection`* ([§7.4](#74-lws_projection-drupal-content-as-lws-resources), S8).
 - RDF processing: Turtle content negotiation, SPARQL Update `PATCH`, JSON-LD expansion. (One exception, opt-in: `lws_index` can read the types Turtle and N-Triples content states, after S7.)
 - DPoP (RFC 9449), WebDAV, resumable uploads, Solid/WAC compatibility.
 - Moving resources (proposed upstream in #237).
@@ -929,12 +929,16 @@ Built in step I1 ([§10](#10-implementation-plan)), with two changes: the OpenID
 list the site configures, as Drupal is not one, and there is no authmap link: `lws_agent_users`
 (U1) maps these agents to their users without one.
 
-### 7.4 `lws_projection` (optional, later)
+### 7.4 `lws_projection`: Drupal content as LWS resources
 
-Exposes selected Drupal entity bundles as **read-only** LWS containers, so that nodes, media and
-taxonomy appear as data resources (JSON from the serializer). It would be implemented as an
-alternative `ResourceBackend` behind the parameter converter. It is out of scope for 1.0; see
-question Q1.
+Exposes selected Drupal entity bundles as **read-only** LWS storages, so that nodes, media and
+taxonomy appear as data resources: JSON from core's serializer, as an anonymous visitor may see
+them. A projection (a config entity) names a storage and the bundles it holds, each optionally with
+a type URI; its storage has a container per entity type and bundle,
+`root/{entity type}/{bundle}/`, and in it a resource per entity, named after its ID.
+
+Built in step S8 ([§10](#10-implementation-plan)), with one change: the content is materialized in
+an ordinary storage, kept up to date, rather than served from a second `ResourceBackend`.
 
 ### 7.5 `lws_agent_users`: LWS agents as Drupal users (optional add-on)
 
@@ -1728,7 +1732,58 @@ one of the two failed with a duplicate key.
   resources ended up indexed wrong. After: 352 rebuilds and 4,258 changes, none failed, and the
   index matched every resource. The type index tests pass on all four databases.
 
-**S8.** This is `lws_projection`, optional ([§7](#7-optional-modules)).
+**S8 (optional). `lws_projection`: Drupal content as LWS resources**
+([§7.4](#74-lws_projection-drupal-content-as-lws-resources)).
+
+**Done** (decided 2026-10-09: an optional module, Q1). Differences from §7.4's first sketch:
+
+- **Materialized, not a second backend.** The sketch served projected content from an alternative
+  `ResourceBackend` behind the parameter converter. Every part of the read path (the access check,
+  the controller, listings and their cursors, linksets, entity tags, the type index, notifications)
+  works on `lws_resource` entities, so a second backend meant either an abstraction through all of
+  `lws_storage` or a second implementation of LWS reads. Instead the `Projector` writes each entity
+  into an ordinary storage through `StorageManager`, and everything else works as it does: the
+  conformance of reads, the type index finding projected resources by their types, and
+  subscribers notified of changes to content.
+  - **The cost:** a copy of each entity's JSON, and a delay for changes that save no entity. Saves
+    and deletes are projected when the request ends; a change to the anonymous role's permissions,
+    or to the projection, queues a sync, run on cron in steps of 100 entities, or at once with
+    `drush lws:projection:sync`. Node access grants changed without a save, or a path alias, wait
+    for the next sync.
+- **As a visitor sees it.** An entity is projected only if an anonymous visitor may view it, and
+  serialized by core's serializer (`json`, as core's REST module serves it) with the anonymous user
+  as the account, so only the fields a visitor may view; the whole runs as Anonymous through the
+  account switcher, and the files are Anonymous's. Access results are reset first, as Drupal keeps
+  them for the life of the process. An entity whose ID is not a valid resource name is skipped.
+- **Only what changed is written**, compared byte for byte with the stored content, so entity tags,
+  modification times and notifications follow real changes.
+- **Links:** a bundle's type URI as a declared type (`rel="type"`), and the entity's page as
+  `alternate` (`type="text/html"`) in the resource's linkset, with the canonical base URL.
+- **Read-only:** `ReadOnlyProjections` decorates the access decision and refuses Create, Modify and
+  Delete in a projected storage to everyone, controllers included (`403`, or `401` without a
+  token). Read and Control are decided as for any storage. *Anyone may read it* keeps one public
+  read policy, by its source (`lws_projection:{id}`); others are the storage's own.
+- **Safety:** a projection manages only the storage it made, which State records by its ID. A
+  storage of the same slug made otherwise is never taken over, made read-only or pruned; the form
+  refuses a taken or reserved slug. Deleting a projection leaves its storage as an ordinary one. The
+  last step of a sync takes out the containers of bundles no longer projected and the resources of
+  entities that are gone, a chunk at a time, under the largest recursive delete.
+- **Dependencies:** a projection depends on the modules of its entity types and on bundles that are
+  configuration, such as content types. One that goes takes its content out of the projection,
+  rather than the projection with it.
+- **Not built:** translations (the default translation only); a sync on a schedule, for changes
+  that save no entity.
+- **Verified:**
+  - kernel tests: a sync and what it serves (only published articles, as JSON, without fields a
+    visitor may not see, typed, with the page in the linkset), a second sync writing nothing; writes
+    refused even with a policy that allows them; a storage of the same slug left alone; saves,
+    unpublishing, publishing and deleting projected when the request ends, and a save that changes
+    nothing writing nothing; the anonymous role losing and regaining *access content*; changes to
+    the projection, a content type deleted, and the projection deleted; the form;
+  - on the development site, through Apache: the storage, the listing, an article as JSON and a
+    draft's `404`, a write's `401`, and edits made from Drush projected when Drush ended;
+  - the 7 new tests pass on SQLite, MySQL 8.4, MariaDB 11.8 and PostgreSQL 17, and phpcs and
+    phpstan (level 8) are clean. No other module changed.
 
 ### Authorization module steps
 
@@ -2314,8 +2369,9 @@ makes. Where `lws-server` (the Java implementation) chose differently, that is n
 
 1. **Q1. Native storage only, or project Drupal content too?** This design makes Drupal a host for
    LWS storages. If "expose Drupal" should also mean "nodes, media and users readable over LWS",
-   `lws_projection` ([§7.4](#74-lws_projection-optional-later)) moves up the plan. Which matters
-   more to you?
+   `lws_projection` ([§7.4](#74-lws_projection-drupal-content-as-lws-resources)) moves up the plan.
+   Which matters more to you? *Decided 2026-10-09: both, with Drupal content projected by the
+   optional `lws_projection`* (S8).
 2. **Q2. How are storages provisioned?** Created by an admin or through Drush only, or one storage
    per Drupal user automatically (needs `lws_identity`)?
 3. **Q3. Should Drupal also be an identity provider?** `lws_identity` (CID documents for users,

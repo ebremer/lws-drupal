@@ -1,0 +1,5 @@
+entity.lws_projection.collection:
+  title: 'Projections'
+  route_name: entity.lws_projection.collection
+  base_route: lws.settings
+  weight: 60
