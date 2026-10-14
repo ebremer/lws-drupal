@@ -100,7 +100,7 @@ final class AuthorizationSettingsForm extends ConfigFormBase {
       '#type' => 'details',
       '#title' => $this->t("This site's authorization server"),
       '#open' => TRUE,
-      '#description' => $this->t('Its metadata is at <a href=":url">:url</a>.', [':url' => $this->local->getIssuer() . LocalAuthorizationServer::METADATA_PATH]),
+      '#description' => $this->t('Its metadata is at <a href=":url">:url</a>.', [':url' => $this->local->metadataUrl()]),
     ];
     $options = [];
     foreach ($this->suites->getDefinitions() as $id => $definition) {

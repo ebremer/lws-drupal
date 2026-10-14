@@ -90,4 +90,32 @@ final class StatusReportTest extends LwsStorageKernelTestBase {
     $this->assertSame(self::BASE . '/.well-known/lws-configuration', (string) $responses->getLastRequest()?->getUri());
   }
 
+  /**
+   * Tests that entry for a site below the root of its host.
+   *
+   * The issuer keeps the path, so a client asks for the metadata with the
+   * well-known segment before it (RFC 8414 §3.1), not at the site.
+   */
+  public function testMetadataBelowRoot(): void {
+    $base = self::BASE . '/targets/drupal';
+    $this->config('lws.settings')->set('base_url', $base . '/')->save();
+    $responses = new MockHandler([
+      new Response(200, ['Content-Type' => 'application/json'], (string) json_encode(['issuer' => $base])),
+      new Response(200, ['Content-Type' => 'application/json'], (string) json_encode(['issuer' => self::BASE])),
+    ]);
+    $this->container->set('http_client', new Client(['handler' => HandlerStack::create($responses)]));
+    $hooks = $this->container->get(LwsAuthzRequirements::class);
+    $this->assertInstanceOf(LwsAuthzRequirements::class, $hooks);
+    $this->assertSame(RequirementSeverity::OK, $this->severity($hooks, 'lws_authz_metadata'));
+    $this->assertSame(self::BASE . '/.well-known/lws-configuration/targets/drupal', (string) $responses->getLastRequest()?->getUri());
+    // The origin's metadata is another issuer's; the entry says where to send
+    // the URL clients ask for.
+    $requirements = $hooks->runtime();
+    $this->assertSame(RequirementSeverity::Warning, $requirements['lws_authz_metadata']['severity']);
+    $this->assertStringContainsString('send ' . self::BASE . '/.well-known/lws-configuration/targets/drupal to ' . $base . '/.well-known/lws-configuration,', (string) $requirements['lws_authz_metadata']['description']);
+    // The site's own server is fine below the root, and names its issuer.
+    $this->assertSame(RequirementSeverity::OK, $requirements['lws_authz_local_server']['severity']);
+    $this->assertStringStartsWith($base . ';', (string) $requirements['lws_authz_local_server']['value']);
+  }
+
 }

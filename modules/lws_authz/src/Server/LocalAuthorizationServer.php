@@ -9,14 +9,20 @@ use Drupal\lws\Routing\LwsUrlGenerator;
 use Drupal\lws\Routing\LwsUrlParser;
 use Drupal\lws_authz\AuthenticationSuite\AuthenticationSuiteManager;
 use Drupal\lws_authz\AuthorizationServerInterface;
+use Ebremer\Lws\Auth\AuthorizationServerMetadata;
 use Ebremer\Lws\Vocabulary;
 
 /**
  * This site's own authorization server (LWS Core §5.2.2, §5.2.3).
  *
- * Its issuer is the origin of the LWS base URL, so that its metadata sits
- * exactly at /.well-known/lws-configuration (DESIGN.md D13). Its endpoints
- * live under the LWS prefix: {prefix}/oauth/token and {prefix}/oauth/jwks.
+ * Its issuer is the LWS base URL without a trailing slash (DESIGN.md D13):
+ * the origin for a site at the root of its host, whose metadata then sits
+ * exactly at /.well-known/lws-configuration, and the origin and path for a
+ * site below it, whose metadata is at /.well-known/lws-configuration followed
+ * by that path (RFC 8414 §3.1). Drupal serves it at its own
+ * /.well-known/lws-configuration either way; under a path, the web server or
+ * proxy maps the RFC 8414 URL there. Its endpoints live under the LWS prefix:
+ * {prefix}/oauth/token and {prefix}/oauth/jwks.
  */
 final class LocalAuthorizationServer implements AuthorizationServerInterface {
 
@@ -59,8 +65,20 @@ final class LocalAuthorizationServer implements AuthorizationServerInterface {
     if (!is_array($parts) || !isset($parts['scheme'], $parts['host'])) {
       return '';
     }
-    // An IPv6 host keeps its brackets.
-    return strtolower($parts['scheme']) . '://' . strtolower($parts['host']) . (isset($parts['port']) ? ':' . $parts['port'] : '');
+    // An IPv6 host keeps its brackets. The path keeps its case, and loses a
+    // trailing slash, as RFC 8414 §3.1 drops one before inserting the
+    // well-known segment.
+    return strtolower($parts['scheme']) . '://' . strtolower($parts['host']) . (isset($parts['port']) ? ':' . $parts['port'] : '') . rtrim($parts['path'] ?? '', '/');
+  }
+
+  /**
+   * The URL of its metadata: the well-known segment before the issuer's path.
+   *
+   * Empty when it has no issuer.
+   */
+  public function metadataUrl(): string {
+    $issuer = $this->getIssuer();
+    return $issuer === '' ? '' : AuthorizationServerMetadata::metadataUrl($issuer);
   }
 
   /**

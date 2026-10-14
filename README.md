@@ -390,8 +390,12 @@ ES384, EdDSA, RS256, RS384, RS512, PS256, PS384 or PS512) from one authorization
 must name that server as `iss` and the storage URI, alone, as `aud` (LWS Core
 §5.2.4).
 
-By default that server is the site's own, `local`. Its issuer is the origin of
-the LWS base URL, so its metadata is at `/.well-known/lws-configuration`. Its
+By default that server is the site's own, `local`. Its issuer is the LWS base
+URL without a trailing slash. For a site at the root of its host that is the
+origin, and its metadata is at `/.well-known/lws-configuration`. For a site
+below it, say `https://host.example/site`, the issuer keeps the path and its
+metadata is at `https://host.example/.well-known/lws-configuration/site`
+(RFC 8414 §3.1). Its
 token endpoint exchanges an authentication credential for a token to one of the
 site's storages (LWS Core §5.2.3), for 300 seconds by default and never longer than
 the credential lives. It takes self-signed controlled identifier credentials
@@ -527,8 +531,10 @@ such as `mysql://root:secret@127.0.0.1/lws_test` or
   Without one it cannot issue tokens, storages that trust it answer requests
   that need a token with `503`, and the status report says so. Run
   `drush lws:key:rotate` as the web server's user, which must be able to read
-  the keys. A site installed in a subdirectory needs the web server to serve
-  `/.well-known/lws-configuration` from the site.
+  the keys. A site below the root of its host, whose base URL has a path,
+  needs the web server or a proxy to send
+  `/.well-known/lws-configuration/<path>` to the site's own
+  `/.well-known/lws-configuration`.
 - **Configure the private file system.** Data resources keep their content there,
   under `private://lws/`; until it is set they cannot be created, and the status
   report says so. Another stream wrapper can be chosen with
@@ -545,8 +551,8 @@ such as `mysql://root:secret@127.0.0.1/lws_test` or
   content in the public file system as an error: anyone who learned a file's
   location could download it, whatever LWS policy says.
 - **Let clients find the authorization server.** The status report fetches
-  `/.well-known/lws-configuration` from the issuer, as clients do, and warns if
-  a proxy or the web server does not pass it to Drupal.
+  the issuer's metadata, as clients do, and warns if a proxy or the web server
+  does not pass it to Drupal.
 - **Run cron,** which deletes the files of recursively deleted resources and of
   deleted storages, and with `lws_notify` retries notification deliveries.
 - **Notifications** (`lws_notify`) are signed with keys kept like the

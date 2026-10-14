@@ -276,6 +276,40 @@ final class TokenExchangeTest extends LwsStorageKernelTestBase {
   }
 
   /**
+   * Tests a site below the root of its host: the issuer keeps the path.
+   *
+   * Its metadata is then at the well-known segment followed by the path (RFC
+   * 8414 §3.1), which a proxy sends to the site's own
+   * /.well-known/lws-configuration; credentials name the issuer with its path
+   * as their audience, and tokens carry it.
+   */
+  public function testIssuerWithPath(): void {
+    $base = self::BASE . '/targets/drupal';
+    $storage = $base . '/lws/alice/';
+    $this->config('lws.settings')->set('base_url', $base . '/')->save();
+    $local = $this->container->get('lws_authz.local_server');
+    $this->assertSame($base, $local->getIssuer());
+    $this->assertSame(self::BASE . '/.well-known/lws-configuration/targets/drupal', $local->metadataUrl());
+
+    $metadata = $this->json($this->send('GET', '/.well-known/lws-configuration'));
+    $this->assertSame($base, $metadata['issuer']);
+    $this->assertSame($base . '/lws/oauth/token', $metadata['token_endpoint']);
+    $this->assertSame($base . '/lws/oauth/jwks', $metadata['jwks_uri']);
+
+    $credentials = SelfSignedCredentials::didKey($this->agentKey);
+    $token = $this->assertIssued($this->tokenRequest($this->exchange($credentials->createToken($base), $storage)));
+    $claims = Jwt::decodeClaims($token);
+    $this->assertSame($base, $claims['iss']);
+    $this->assertSame($storage, $claims['aud']);
+    $this->assertSame(200, $this->send('GET', '/lws/alice/root/', ['Authorization' => 'Bearer ' . $token])->getStatusCode());
+    $challenge = (string) $this->send('GET', '/lws/alice/root/')->headers->get('WWW-Authenticate');
+    $this->assertStringContainsString('as_uri="' . $base . '"', $challenge);
+
+    // A credential for the origin alone is not for this server.
+    $this->assertOauthError($this->tokenRequest($this->exchange($this->credential(['aud' => [self::BASE]]), $storage)), 'invalid_request');
+  }
+
+  /**
    * Tests that a token never outlives its credential, nor the lifetime set.
    */
   public function testLifetime(): void {

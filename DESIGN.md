@@ -650,9 +650,19 @@ mapped user (uid and roles) on the `LwsAccount`. Either way:
 
 ### 6.2 Authorization server metadata (§5.2.2)
 
-The issuer is the site origin by default (`https://site.example`), with no path. This makes the
-metadata URL exactly `/.well-known/lws-configuration`, as §5.2.2 states. A site installed in a
-sub-directory needs a web-server rewrite; `hook_requirements()` checks for this.
+The issuer is the LWS base URL without a trailing slash. For a site at the root of its host that is
+the site origin (`https://site.example`), with no path, and the metadata URL is exactly
+`/.well-known/lws-configuration`, as §5.2.2 states. For a site below the root (base URL
+`https://host.example/site`) the issuer keeps the path, and its metadata is at
+`https://host.example/.well-known/lws-configuration/site` (RFC 8414 §3.1). Drupal answers at its own
+`/.well-known/lws-configuration` either way, so such a site needs the web server or a proxy to send
+the RFC 8414 URL there; `hook_requirements()` fetches the metadata as a client would and checks for
+this.
+
+Until 14 October 2026 the issuer was always the origin. A site below the root then had its metadata
+at the root of the host, outside the site, where another application on the same host may answer
+for its own issuer; several LWS servers behind one host, each under its own path, could not work.
+With the path in the issuer each has a metadata URL of its own.
 
 ```json
 {
@@ -2359,7 +2369,7 @@ makes. Where `lws-server` (the Java implementation) chose differently, that is n
 | **D10** | Entities over custom tables | Content entities for storages, resources, policies, grants, requests and subscriptions. This gives Views, admin UI and hooks; hot paths use direct SQL where the entity query is too slow |
 | **D11** | Content storage | Managed `file` entities, one per content version, in a stream wrapper (`private://` by default). Atomic reference swap; usage-aware deletion; core file validators apply; direct `/system/files` downloads denied |
 | **D12** | Cookies on LWS routes | Never; `lws_bearer` only |
-| **D13** | AS issuer | The site origin, so the metadata sits exactly at `/.well-known/lws-configuration` |
+| **D13** | AS issuer | The LWS base URL: the site origin for a site at the root of its host, so its metadata sits exactly at `/.well-known/lws-configuration`; with the path for a site below it, whose metadata is at that URL followed by the path (RFC 8414 §3.1; changed 2026-10-14, [§6.2](#62-authorization-server-metadata-522)) |
 | **D14** | Build order | A1 before S2: no unauthenticated mode, ever |
 | **D15** | External agents as Drupal users | Optional add-on `lws_agent_users` over contrib `externalauth`; `link_only` by default (Q9); roles as assignees, blocking, a restricted bypass permission |
 

@@ -80,16 +80,17 @@ final class LwsAuthzRequirements {
   /**
    * The entry for the metadata of this site's authorization server.
    *
-   * Clients find the token endpoint through it (LWS Core §5.2.2), at the root
-   * of the issuer's origin, which a proxy or the web server may not pass on
-   * to Drupal. The status report asks for it as a client would.
+   * Clients find the token endpoint through it (LWS Core §5.2.2), at
+   * /.well-known/lws-configuration on the issuer's host followed by the
+   * issuer's path (RFC 8414 §3.1), which a proxy or the web server may not
+   * pass on to Drupal. The status report asks for it as a client would.
    *
    * @return array<string, mixed>
    *   The requirement.
    */
   private function metadata(): array {
     $issuer = $this->local->getIssuer();
-    $url = $issuer . LocalAuthorizationServer::METADATA_PATH;
+    $url = $this->local->metadataUrl();
     $requirement = ['title' => $this->t('LWS authorization server metadata'), 'value' => $url];
     try {
       $response = $this->httpClient->request('GET', $url, [
@@ -113,11 +114,21 @@ final class LwsAuthzRequirements {
     if ($problem === NULL) {
       return $requirement + ['severity' => RequirementSeverity::OK];
     }
-    return $requirement + [
-      'description' => $this->t('@problem Clients cannot find where to exchange their credentials for access tokens. Make sure that the web server, and any proxy in front of it, passes @path to Drupal.', [
+    // Drupal answers it at its own /.well-known/lws-configuration; for a site
+    // below the root of its host that is not the URL clients ask for.
+    $served = $this->urls->baseUrl() . LocalAuthorizationServer::METADATA_PATH;
+    $description = $served === $url
+      ? $this->t('@problem Clients cannot find where to exchange their credentials for access tokens. Make sure that the web server, and any proxy in front of it, passes @path to Drupal.', [
         '@problem' => $problem,
         '@path' => LocalAuthorizationServer::METADATA_PATH,
-      ]),
+      ])
+      : $this->t('@problem Clients cannot find where to exchange their credentials for access tokens. Have the web server, or a proxy in front of it, send @url to @served, where Drupal answers it.', [
+        '@problem' => $problem,
+        '@url' => $url,
+        '@served' => $served,
+      ]);
+    return $requirement + [
+      'description' => $description,
       'severity' => RequirementSeverity::Warning,
     ];
   }
@@ -136,19 +147,6 @@ final class LwsAuthzRequirements {
         'title' => $title,
         'value' => $this->t('No signing key directory'),
         'description' => $this->t("It cannot issue access tokens. Set <code>\$settings['lws_authz_key_directory']</code> in settings.php to a directory outside the web root, or configure the private file system."),
-        'severity' => RequirementSeverity::Warning,
-      ];
-    }
-    $basePath = (string) parse_url($this->urls->baseUrl(), PHP_URL_PATH);
-    if (trim($basePath, '/') !== '') {
-      return [
-        'title' => $title,
-        'value' => $this->local->getIssuer(),
-        'description' => $this->t('The site lives at @path, but the metadata of its issuer must be at @url. Have the web server rewrite that URL to @path@metadata.', [
-          '@path' => $basePath,
-          '@url' => $this->local->getIssuer() . LocalAuthorizationServer::METADATA_PATH,
-          '@metadata' => LocalAuthorizationServer::METADATA_PATH,
-        ]),
         'severity' => RequirementSeverity::Warning,
       ];
     }
