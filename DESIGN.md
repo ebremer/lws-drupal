@@ -8,7 +8,7 @@ specifications define around them.
 |---|---|
 | **Status** | Draft for review. Nothing is implemented yet |
 | **Date** | 2026-10-07 |
-| **Spec baseline** | LWS Core **W3C Working Draft, 5 October 2026** ([`WD-lws10-core-20261005`](https://www.w3.org/TR/2026/WD-lws10-core-20261005/)), the text of `w3c/lws-protocol` @ `ef02548` ("Switch baseline PATCH format from JSON Merge Patch to JSON Patch", #255). The companion drafts as they stood at that commit; see [§2](#2-specification-baseline) |
+| **Spec baseline** | LWS Core **W3C Working Draft, 19 October 2026** ([`WD-lws10-core-20261019`](https://www.w3.org/TR/2026/WD-lws10-core-20261019/)), the text of `w3c/lws-protocol` @ `9a08ff6` ("Define how resources move between containers", #237). The companion drafts as they stood at that commit; see [§2](#2-specification-baseline) |
 | **Target platform** | Drupal `^11.3` (PHP 8.3+, Symfony 7). Avoids APIs deprecated for Drupal 12 |
 | **How to review** | Decisions that need your sign-off are tagged **[D1]…[D15]** and gathered in [§13](#13-decisions-for-review). Open questions are in [§14](#14-open-questions) |
 
@@ -60,7 +60,8 @@ These may become later steps; see [§14](#14-open-questions).
   the optional `lws_projection`* ([§7.4](#74-lws_projection-drupal-content-as-lws-resources), S8).
 - RDF processing: Turtle content negotiation, SPARQL Update `PATCH`, JSON-LD expansion. (One exception, opt-in: `lws_index` can read the types Turtle and N-Triples content states, after S7.)
 - DPoP (RFC 9449), WebDAV, resumable uploads, Solid/WAC compatibility.
-- Moving resources (proposed upstream in #237).
+- Moving resources (proposed upstream in #237). *Built after all, once the drafts of 19 October
+  2026 defined it* ([§5.8](#58-moving-resources), R1).
 - Storages on their own hostnames, one per storage.
 
 ---
@@ -69,20 +70,30 @@ These may become later steps; see [§14](#14-open-questions).
 
 | Document | Version used | Module |
 |---|---|---|
-| [lws10-core](https://www.w3.org/TR/2026/WD-lws10-core-20261005/) | **WD 2026-10-05** | `lws_storage`, `lws_authz` |
-| [lws10-authn-ssi-cid](https://www.w3.org/TR/lws10-authn-ssi-cid/) | WD 2026-09-21 (covers `did:key` and `did:web` subjects) | `lws_authz` |
-| [lws10-authn-openid](https://www.w3.org/TR/lws10-authn-openid/) | WD 2026-08-03 | `lws_authz` |
-| [lws10-authn-saml](https://www.w3.org/TR/lws10-authn-saml/) | WD 2026-08-03 | `lws_authz` (later step) |
+| [lws10-core](https://www.w3.org/TR/2026/WD-lws10-core-20261019/) | **WD 2026-10-19** | `lws_storage`, `lws_authz` |
+| [lws10-authn-ssi-cid](https://www.w3.org/TR/lws10-authn-ssi-cid/) | WD 2026-10-15 (wording only since 2026-09-21; covers `did:key` and `did:web` subjects) | `lws_authz` |
+| [lws10-authn-openid](https://www.w3.org/TR/lws10-authn-openid/) | WD 2026-10-15 (wording only since 2026-08-03) | `lws_authz` |
+| [lws10-authn-saml](https://www.w3.org/TR/lws10-authn-saml/) | WD 2026-10-15 (wording and the example's XML only since 2026-08-03) | `lws_authz` (later step) |
 | lws10-authn-ssi-did-key | Discontinued 2026-09-18; subsumed by SSI-CID | not implemented on its own |
-| [lws10-notifications-webhook](https://w3c.github.io/lws-protocol/lws10-notifications-webhook/) | ED @ `ef02548` | `lws_notify` |
-| [lws10-index](https://w3c.github.io/lws-protocol/lws10-index/) | ED @ `ef02548` | `lws_index` |
-| [lws10-vocab](https://w3c.github.io/lws-protocol/lws10-vocab/) | `vocabulary.yml` @ `ef02548` (includes `StorageResource`) | `lws` |
+| [lws10-notifications-webhook](https://w3c.github.io/lws-protocol/lws10-notifications-webhook/) | ED @ `9a08ff6` (unchanged since `ef02548`) | `lws_notify` |
+| [lws10-index](https://w3c.github.io/lws-protocol/lws10-index/) | ED @ `9a08ff6` (unchanged since `ef02548`) | `lws_index` |
+| [lws10-vocab](https://w3c.github.io/lws-protocol/lws10-vocab/) | `vocabulary.yml` @ `9a08ff6` (includes `StorageResource`, and `MoveResource`, `appliesTo` and `preservesIdentifier`) | `lws` |
 
 Section numbers below (§5.2.1 and so on) are those of the core Working Draft.
 
-The **5 October change that matters here** is #255: JSON Patch (RFC 6902,
-`application/json-patch+json`) is now the baseline `PATCH` format for resources and linksets. JSON
-Merge Patch is an optional extra.
+The **19 October changes that matter here** (step R1):
+
+- #256: a `401` names the **protected resource metadata** (RFC 9728) of the URL requested, which
+  names the authorization server, instead of `as_uri` and `realm`; an access token's `aud`
+  *includes* the storage URI ([§6.7](#67-protected-resource-metadata-and-the-401-challenge));
+- #253: only `application/lws+json` is required of containers, and the **LWS profile**
+  (`https://www.w3.org/ns/lws/v1`) says when another RDF media type may be chosen
+  ([§12](#12-spec-interpretation-decisions), rows 18 and 19);
+- #237: **moving resources** between containers, by changing the `up` link of a linkset
+  ([§5.8](#58-moving-resources)).
+
+The 5 October change before them was #255: JSON Patch (RFC 6902, `application/json-patch+json`) is
+the baseline `PATCH` format for resources and linksets. JSON Merge Patch is an optional extra.
 
 ---
 
@@ -2410,10 +2421,55 @@ the plan above:
   - 702 tests (16 of them new) pass on SQLite and MariaDB 11.8, and the new ones on MySQL 8.4 and
     PostgreSQL 17; phpcs and phpstan (level 8) are clean.
 
+### Re-baselines
+
+**R1. The drafts of 19 October 2026.** The core Working Draft `WD-lws10-core-20261019`
+(`w3c/lws-protocol` @ `9a08ff6`) and the authentication suites' Working Drafts of 15 October, which
+changed only wording ([§2](#2-specification-baseline)). Touchstone, re-baselined the same day
+(its D-0100), failed only the `401` challenge against the site as it was, 14 MUST tests; it found
+moving inapplicable, with no `MoveResource` described, and Turtle containers too (`406`).
+
+**Done.** In three parts:
+
+- **Authorization server discovery** (#256, [§6.7](#67-protected-resource-metadata-and-the-401-challenge)):
+  - every `401` names, as `resource_metadata`, the protected resource metadata of the URL
+    requested, built in one place (`BearerChallenge::unauthorized()`), and links to the storage;
+  - `lws_authz` serves that metadata at `/.well-known/oauth-protected-resource` followed by any
+    path, through a path processor as for the URL space, to anyone and alike for every URL of a
+    storage; the status report checks that the web server sends it there for a site below the root;
+  - `as_uri` and `realm` still follow, for clients of the earlier drafts, unless
+    `lws_authz.settings:legacy_challenge` is off (update 11005); `Authentication`'s `realm` and
+    `asUri` became `storageUri` and `issuer`;
+  - an access token's `aud` needs to include the storage URI, no longer to be it alone.
+- **The LWS profile** (#253, [§12](#12-spec-interpretation-decisions) rows 18 and 19): `profile`
+  read as a list of URIs; `ld+json` chosen for a container, and for the listings that are
+  containers, only when no profile or the LWS profile is asked for, and then named in
+  `Content-Type`. No Turtle or other RDF syntax (`406`), as before.
+- **Moving resources** (#237, [§5.8](#58-moving-resources), [§12](#12-spec-interpretation-decisions)
+  rows 22 to 28): a change of `up` in a linkset moves the resource, and its members with it;
+  `lws_storage.settings:move_applies_to` (both kinds by default), the `MoveResource` capability,
+  `301` from former URIs (the new table `lws_resource_move`, update 11002), and `Move` activities.
+
+**Not built:** Turtle, TriG, N-Triples and N-Quads for containers, which need a JSON-LD 1.1
+processor; types `lws_index` read from the Turtle content of a moved container's members are not
+re-read with their new URIs until `drush lws:index:rebuild`.
+
+- **Verified:**
+  - kernel tests of the challenge (encoded paths, queries, a base URL with a path, the legacy
+    parameters), the metadata (the same for existing, absent and private URLs, a bad Authorization
+    header, CORS), audiences, profile negotiation, and of moves: the draft's examples, containers
+    with members, refusals, authorization, `301`s, notifications, the type index and projections;
+    a client-side check follows `resource_metadata` with `ebremer/lws-client`'s own classes;
+  - Touchstone (its D-0100 baseline), run on Docker Desktop against its `lws-drupal` target image
+    built from this step: conformant, 210 passed, 0 failed, 11 inapplicable, the move tests among the
+    passed; before this step, on the conformance host, 188 passed, 14 failed, 19 inapplicable;
+  - 764 tests (53 of them new) pass on SQLite, MySQL 8.4, MariaDB 11.8 and PostgreSQL 17; phpcs
+    and phpstan (level 8) are clean.
+
 ### Build order and milestones
 
 ```
-Step 0 ─ S1 ─ A1 ─ S2 ─ S3 ─ S4 ─ A2 ─ A3 ─ A4 ─ S5 ─ A5 ─ (S6 notify) ─ (S7 index) ─ (I1 identity) ─ (U1 agent users) ─ (S8 projection)
+Step 0 ─ S1 ─ A1 ─ S2 ─ S3 ─ S4 ─ A2 ─ A3 ─ A4 ─ S5 ─ A5 ─ (S6 notify) ─ (S7 index) ─ (I1 identity) ─ (U1 agent users) ─ (S8 projection) ─ R1
             │              │         │              │
            M1             M2        M3             M4
 ```
@@ -2442,7 +2498,7 @@ the start. Nothing gets a temporary "open" mode that later has to be removed.
 | Golden samples | `lws-client/conformance/fixtures/responses/*.json` | The server's storage description, container page, linkset, OAuth and problem responses have the shapes the clients expect |
 | Client end-to-end | `ebremer/lws-client` (dev dependency): `php/examples/quickstart.php`, `php/tests/InteropTest.php` | The 13-step interop scenario against a DDEV site. The URL layout ([§4.1](#41-layout)) matches the mock server's, so the scenario runs unchanged |
 | Multi-language | `lws-client/driver` adapters (`lws-driver/1`) | The same operations from the JS, Java, Python, Go and other clients against Drupal |
-| Conformance | **Touchstone** (Docker image / GitHub Action) | 204 server tests in 15 areas, baselined on WD 2026-10-05. Run in CI on every merge to `main` from M2 |
+| Conformance | **Touchstone** (Docker image / GitHub Action) | 221 server tests, baselined on WD 2026-10-19. Run in CI on every merge to `main` from M2 |
 | W3C test suite | `lws-contrib/lws-test-suite` | Run through Touchstone, which maps it; the suite itself is stale against the WD |
 
 The Touchstone target would be registered like this. Credentials come from CI secrets, never this
@@ -2563,7 +2619,7 @@ makes. Where `lws-server` (the Java implementation) chose differently, that is n
 
 ## Appendix A: Core MUST checklist
 
-Each MUST in LWS Core (WD 2026-10-05) that falls on a server, and the step that delivers it.
+Each MUST in LWS Core (WD 2026-10-19) that falls on a server, and the step that delivers it.
 
 | § | Requirement | Step |
 |---|---|---|
@@ -2585,6 +2641,7 @@ Each MUST in LWS Core (WD 2026-10-05) that falls on a server, and the step that 
 | 9.3 | Range requests; `ETag`; `Link` for `linkset`, `up` and `type`; `HEAD` supported | S2 |
 | 9.4 | PUT/PATCH change content only, unless `Prefer: set-linkset` (then honoured or `501`/ignored); JSON Patch supported; `412` on a failed precondition | S2, S4 |
 | 9.5 | Atomic removal from the parent; non-empty container without recursion → `409`; `204`; `403` vs `401` | S2, A1 |
+| 9 (Moving Resources) | A storage that lets clients move resources describes `MoveResource` (`appliesTo`, `preservesIdentifier`); one that does not refuses a change of `up`. The destination is an existing container; no cycles; atomic; delete on the resource (recursively for a container) and create in the destination authorized first; content and user metadata kept; `200` with the linkset and `Content-Location` when the identifier changes; one `Move` with `origin` and `target` | R1, [§5.8](#58-moving-resources) |
 | 10.x | `NotificationService`, data model, authorization at subscription and at delivery (if advertised) | S6 |
 | 11.x | Services advertised; `Location` on `POST`; JSON-LD serialization; actions and constraints supported (if advertised) | A4 |
 | 12.1 | Description serializable as `application/lws+cid`; containers support `application/lws+json`, with `Content-Type` naming the type chosen; an RDF media type with the LWS profile is chosen only if the server produces the profile in it, and then names it (`lws+json`/`ld+json`/`json` equivalence before 19 October 2026); pagination `first`, `next`, `200` | S1, S3 |

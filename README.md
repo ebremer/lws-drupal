@@ -1,8 +1,8 @@
 # lws-drupal
 
 Drupal 11 modules that make a Drupal site a [W3C Linked Web Storage (LWS)
-1.0](https://www.w3.org/TR/2026/WD-lws10-core-20261005/) server, following the
-core Working Draft of 5 October 2026. The design, and the plan for building it,
+1.0](https://www.w3.org/TR/2026/WD-lws10-core-20261019/) server, following the
+core Working Draft of 19 October 2026. The design, and the plan for building it,
 is in [DESIGN.md](DESIGN.md).
 
 | Module | What it does |
@@ -18,11 +18,13 @@ is in [DESIGN.md](DESIGN.md).
 
 ## Status
 
-**Step S8, projections** (DESIGN.md §10), after S1, storages, A1, access
-tokens, S2, data resources, S3, pagination, S4, metadata and JSON Patch, A2, the
-authorization server, A3, access policies, A4, access requests and grants, S5,
-hardening and the administration pages, A5, OpenID Connect, S6,
-notifications, S7, the type index, I1, agent identities, and U1, agent users. Storages are created at *Content ›
+**Step R1, the drafts of 19 October 2026** (DESIGN.md §10): the authorization
+server found through protected resource metadata (RFC 9728), the LWS profile,
+and moving resources. After S1, storages, A1, access tokens, S2, data
+resources, S3, pagination, S4, metadata and JSON Patch, A2, the authorization
+server, A3, access policies, A4, access requests and grants, S5, hardening and
+the administration pages, A5, OpenID Connect, S6, notifications, S7, the type
+index, I1, agent identities, U1, agent users, and S8, projections. Storages are created at *Content ›
 LWS storages* or with Drush; everything in them is managed over HTTP, with
 access tokens the site issues itself, for self-signed credentials or OpenID
 Connect ID Tokens, by their controllers and by the agents their access policies
