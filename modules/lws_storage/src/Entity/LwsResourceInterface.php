@@ -36,6 +36,8 @@ interface LwsResourceInterface extends ContentEntityInterface, EntityChangedInte
 
   /**
    * The decoded path below the storage URI, such as "root/notes/a.txt".
+   *
+   * It changes when the resource, or a container above it, moves.
    */
   public function getPath(): string;
 

@@ -21,8 +21,9 @@ use Drupal\lws_storage\Views\LwsResourceViewsData;
 /**
  * A container or data resource.
  *
- * The path and its hash are derived from the parent when the resource is
- * created, and never change: LWS has no move operation.
+ * The path and its hash are derived from the parent and the name: when the
+ * resource is created, and when it moves to another container, which changes
+ * its URI (StorageManager::changeLinkset()). Its kind never changes.
  */
 #[ContentEntityType(
   id: 'lws_resource',
@@ -149,22 +150,30 @@ class LwsResource extends ContentEntityBase implements LwsResourceInterface {
   /**
    * {@inheritdoc}
    *
-   * Derives the path, its hash and the kind of a new resource.
+   * Derives the path and its hash of a new resource, and of one that moved
+   * or was renamed, and the kind of a new one. The paths of what a moved
+   * container holds are the mover's to change.
    */
   public function preSave(EntityStorageInterface $storage): void {
     parent::preSave($storage);
-    if (!$this->isNew()) {
+    $original = $this->isNew() ? NULL : $this->getOriginal();
+    if ($original instanceof LwsResourceInterface && (int) $original->get('parent')->target_id === (int) $this->get('parent')->target_id && $original->getName() === $this->getName()) {
       return;
     }
     $parent = $this->getParent();
     if ($parent !== NULL && (!$parent->isContainer() || $parent->getLwsStorageId() !== $this->getLwsStorageId())) {
-      throw new \LogicException('A resource must be created in a container of its own storage.');
+      throw new \LogicException($this->isNew() ? 'A resource must be created in a container of its own storage.' : 'A resource can only move to a container of its own storage.');
     }
     $name = $this->getName();
+    if ($original instanceof LwsResourceInterface && $original->isContainer() !== str_ends_with($name, '/')) {
+      throw new \LogicException('A resource cannot become a container, nor a container a data resource.');
+    }
     $path = $parent === NULL ? $name : $parent->getPath() . $name;
     $this->set('path', $path);
     $this->set('path_hash', hash('sha256', $path));
-    $this->set('kind', str_ends_with($name, '/') ? 'container' : 'data');
+    if ($this->isNew()) {
+      $this->set('kind', str_ends_with($name, '/') ? 'container' : 'data');
+    }
   }
 
   /**

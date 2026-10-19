@@ -55,6 +55,7 @@ final class LwsCorsSubscriber implements EventSubscriberInterface {
     'Accept-Patch',
     'Accept-Query',
     'Allow',
+    'Content-Location',
     'Content-Range',
     'ETag',
     'Last-Modified',

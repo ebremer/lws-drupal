@@ -16,6 +16,7 @@ use Drupal\lws\Http\MediaTypeNegotiator;
 use Drupal\lws\Http\Preconditions;
 use Drupal\lws\Routing\LwsTarget;
 use Drupal\lws\Http\RequestBody;
+use Drupal\lws_storage\Access\LwsAccessCheck;
 use Drupal\lws_storage\Entity\LwsResourceInterface;
 use Drupal\lws_storage\Entity\LwsStorageInterface;
 use Drupal\lws_storage\Http\ContentResponse;
@@ -24,6 +25,7 @@ use Drupal\lws_storage\Http\WriteRequests;
 use Drupal\lws_storage\Linkset\Linksets;
 use Drupal\lws_storage\Listing\ContainerPager;
 use Drupal\lws_storage\ResourceLinks;
+use Drupal\lws_storage\ResourceMoves;
 use Drupal\lws_storage\ResourceRepository;
 use Drupal\lws_storage\StorageManager;
 use Ebremer\Lws\Http\LinkHeader;
@@ -81,13 +83,20 @@ final class ResourceController implements ContainerInjectionInterface {
     private readonly ConfigFactoryInterface $configFactory,
     #[Autowire(service: 'logger.channel.lws')]
     private readonly LoggerInterface $logger,
+    private readonly ResourceMoves $moves,
   ) {}
 
   /**
    * Serves a GET or HEAD request.
+   *
+   * Where nothing exists, a resource that moved from there redirects to
+   * where it is now.
    */
   public function read(LwsStorageInterface $lws_storage, LwsTarget $lws_target, Request $request): Response {
-    $resource = $this->resources->findByTarget($lws_storage, $lws_target) ?? throw LwsHttpException::notFound();
+    $resource = $request->attributes->get(LwsAccessCheck::MOVED_ONLY) ? NULL : $this->resources->findByTarget($lws_storage, $lws_target);
+    if ($resource === NULL) {
+      return $this->moved($lws_storage, $lws_target, $request) ?? throw LwsHttpException::notFound();
+    }
     $allow = implode(', ', $lws_target->allowedMethods());
     return $resource->isContainer()
       ? $this->container($lws_storage, $resource, $request, $allow)
@@ -203,6 +212,30 @@ final class ResourceController implements ContainerInjectionInterface {
     );
     $this->log('Deleted', $lws_storage, $resource, $request);
     return LwsResponse::empty(Response::HTTP_NO_CONTENT);
+  }
+
+  /**
+   * Redirects a former URI of a moved resource to its URI (Moving Resources).
+   *
+   * "SHOULD respond to subsequent requests on the previous identifiers of the
+   * resource ... with 301 Moved Permanently", and so it does, with the query
+   * kept, as a page cursor still holds there; but only to an agent who may
+   * read the resource where it is now. Anyone else learns nothing of where
+   * it went, nor that it moved (Privacy Considerations).
+   *
+   * @return \Symfony\Component\HttpFoundation\Response|null
+   *   The redirect; NULL when no resource the agent may read moved from
+   *   there.
+   */
+  private function moved(LwsStorageInterface $storage, LwsTarget $target, Request $request): ?Response {
+    $moved = $this->moves->findByTarget($storage, $target);
+    $agent = Authentication::fromRequest($request)->agent;
+    if ($moved === NULL || !$this->decisions->decide($agent, Action::Read, $this->links->contextOf($storage, $moved))->isPermitted()) {
+      return NULL;
+    }
+    $query = $request->getQueryString();
+    $location = $this->links->uri($storage, $moved) . ($query === NULL ? '' : '?' . $query);
+    return LwsResponse::empty(Response::HTTP_MOVED_PERMANENTLY, [LinkHeader::format($this->links->storageUri($storage), LinkRelation::STORAGE)], NULL, ['Location' => $location]);
   }
 
   /**

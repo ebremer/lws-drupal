@@ -240,15 +240,23 @@ final class AdminUiTest extends LwsStorageKernelTestBase {
       'max_recursive_delete' => '50',
       'page_size' => '20',
       'require_if_match' => 0,
+      'move_applies_to' => ['DataResource' => 'DataResource', 'Container' => NULL],
     ];
+    $this->assertSame(['DataResource', 'Container'], $this->config('lws_storage.settings')->get('move_applies_to'));
     $this->assertSame([], $this->submit(StorageSettingsForm::class, $values));
     $settings = $this->config('lws_storage.settings');
     $this->assertSame(104857600, $settings->get('max_upload_bytes'));
     $this->assertSame(50, $settings->get('max_recursive_delete'));
     $this->assertSame(20, $settings->get('page_size'));
+    $this->assertSame(['DataResource'], $settings->get('move_applies_to'));
     $this->drupalGet('/admin/config/services/lws/storage');
     $this->assertSession()->statusCodeEquals(200);
     $this->assertSession()->fieldValueEquals('max_upload_bytes', '100 MB');
+    $this->assertSession()->checkboxChecked('move_applies_to[DataResource]');
+    $this->assertSession()->checkboxNotChecked('move_applies_to[Container]');
+    $neither = ['DataResource' => NULL, 'Container' => NULL];
+    $this->assertSame([], $this->submit(StorageSettingsForm::class, ['move_applies_to' => $neither] + $values));
+    $this->assertSame([], $this->config('lws_storage.settings')->get('move_applies_to'));
     $this->assertNotSame([], $this->submit(StorageSettingsForm::class, ['page_size' => '5000'] + $values));
     $this->assertNotSame([], $this->submit(StorageSettingsForm::class, ['max_upload_bytes' => 'huge'] + $values));
     // As saved, not as the refused forms left the configuration object.

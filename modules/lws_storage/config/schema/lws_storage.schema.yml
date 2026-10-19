@@ -13,7 +13,7 @@ lws_storage.settings:
           min: 0
     max_recursive_delete:
       type: integer
-      label: 'The most resources one recursive delete may remove; more answers 422. 0 for no limit.'
+      label: 'The most resources one recursive delete may remove, or the move of a container take along; more answers 422. 0 for no limit.'
       constraints:
         Range:
           min: 0
@@ -27,3 +27,14 @@ lws_storage.settings:
         Range:
           min: 1
           max: 1000
+    move_applies_to:
+      type: sequence
+      label: 'The kinds of resource clients may move to another container by changing their "up" link: DataResource, Container, both, or neither, which turns moving off.'
+      sequence:
+        type: string
+        label: 'A kind of resource'
+        constraints:
+          Choice:
+            choices:
+              - DataResource
+              - Container

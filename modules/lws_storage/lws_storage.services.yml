@@ -30,6 +30,7 @@ services:
       - '@event_dispatcher'
       - '@lws_storage.resource_links'
       - '@current_user'
+      - '@lws_storage.resource_moves'
     tags:
       - { name: needs_destruction }
   Drupal\lws_storage\StorageManager: '@lws_storage.storage_manager'
@@ -41,12 +42,17 @@ services:
 
   lws_storage.resource_links:
     class: Drupal\lws_storage\ResourceLinks
-    arguments: ['@lws.url_generator', '@lws_storage.storage_registry', '@database']
+    arguments: ['@lws.url_generator', '@lws_storage.storage_registry', '@database', '@lws.url_parser']
   Drupal\lws_storage\ResourceLinks: '@lws_storage.resource_links'
+
+  lws_storage.resource_moves:
+    class: Drupal\lws_storage\ResourceMoves
+    arguments: ['@config.factory', '@database', '@entity_type.manager', '@lws_storage.resource_repository']
+  Drupal\lws_storage\ResourceMoves: '@lws_storage.resource_moves'
 
   lws_storage.description_builder:
     class: Drupal\lws_storage\StorageDescriptionBuilder
-    arguments: ['@lws.url_generator']
+    arguments: ['@lws.url_generator', '@lws_storage.resource_moves', '@lws_storage.resource_links', '@Drupal\lws\Access\AccessDecisionInterface']
     tags:
       - { name: service_collector, tag: lws.storage_service, call: addService }
   Drupal\lws_storage\StorageDescriptionBuilder: '@lws_storage.description_builder'
@@ -70,7 +76,7 @@ services:
 
   lws_storage.access_check:
     class: Drupal\lws_storage\Access\LwsAccessCheck
-    arguments: ['@Drupal\lws\Access\AccessDecisionInterface', '@lws_storage.resource_links', '@lws_storage.resource_repository', '@lws_storage.linksets']
+    arguments: ['@Drupal\lws\Access\AccessDecisionInterface', '@lws_storage.resource_links', '@lws_storage.resource_repository', '@lws_storage.linksets', '@lws_storage.resource_moves']
     tags:
       - { name: access_check, applies_to: _lws_access }
 

@@ -6,6 +6,7 @@ namespace Drupal\Tests\lws_storage\Kernel;
 
 use Drupal\KernelTests\KernelTestBase;
 use Drupal\lws_storage\Entity\LwsStorageInterface;
+use Drupal\lws_storage\ResourceMoves;
 use Drupal\lws_storage\ResourceRepository;
 use Drupal\lws_storage\StorageManager;
 use Ebremer\Lws\Auth\Jwt;
@@ -82,6 +83,7 @@ abstract class LwsStorageKernelTestBase extends KernelTestBase {
     $this->installSchema('file', ['file_usage']);
     $this->installEntitySchema('lws_storage');
     $this->installEntitySchema('lws_resource');
+    $this->installSchema('lws_storage', [ResourceMoves::TABLE]);
     $this->installEntitySchema('lws_policy');
     $this->installEntitySchema('lws_access');
     $this->installEntitySchema('date_format');

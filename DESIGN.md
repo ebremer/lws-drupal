@@ -339,7 +339,7 @@ same transaction as the storage. S1 implements `slug`, `label`, `controllers`, `
 | `storage` | entity ref | |
 | `parent` | entity ref → `lws_resource` | `NULL` only for the root |
 | `name` | string, **binary** collation | Last path segment; containers end in `/`. Unique per `(parent, name)` |
-| `path` | string(2048), binary | Materialized path relative to the storage URI, e.g. `root/notes/a.txt`. Used for URL lookup (through `path_hash`) and subtree queries (prefix) |
+| `path` | string(2048), binary | Materialized path relative to the storage URI, e.g. `root/notes/a.txt`. Used for URL lookup (through `path_hash`) and subtree queries (prefix). Rewritten, with its hash, for a resource that moves and everything in it ([§5.8](#58-moving-resources)) |
 | `path_hash` | char(64) | SHA-256 of `path`. Unique per `(storage, path_hash)`, because MySQL cannot index the whole of a 2048-character `utf8mb4` column |
 | `kind` | `container` \| `data` | |
 | `content` | core `file` field → `file` entity | Data resources only: the current version of the content ([§5.3](#53-content-as-managed-files)). The File entity holds the `uri`, `filename` (the resource name), `filemime` (the media type; default `application/octet-stream`), `filesize` and `uid`, so those are not duplicated here |
@@ -380,7 +380,8 @@ Every write is one database transaction. The table maps each operation to its HT
 | **Delete** `DELETE` | `204`. Removes the resource, its linkset and its parent's membership atomically (§9.5). A non-empty container without `Depth: infinity` → `409`; any other `Depth` value → `400`. Recursive delete is allowed only if the agent may delete *every* descendant, otherwise `403` and nothing is removed. The root cannot be deleted (`405`) |
 | **Write preconditions** | `If-Match`, `If-None-Match`, `If-Unmodified-Since` → `412`, evaluated in RFC 9110 §13.2.2 order *inside* the transaction against a row locked with `SELECT … FOR UPDATE`, after its container's (every write locks down the tree, and the storage's quota row last). Optional per-storage `require_if_match` → `428` (off by default; see [§12](#12-spec-interpretation-decisions)) |
 | **Linkset** `GET/HEAD meta/{uuid}` | `application/linkset+json`, `{"linkset":[{"anchor":"<resource URI>", …}]}`. Includes the server-managed `up` and `type` and the user relations. `ETag`; `Allow: GET, HEAD, PUT, PATCH, OPTIONS`; `Accept-Patch: application/json-patch+json, application/merge-patch+json` (§9.1) |
-| **Linkset** `PATCH` / `PUT` | A JSON Patch applies to the **document a GET returns** (`/linkset/0/license`), not to the storage form. The result must still be a linkset for the same anchor (`422` otherwise). Changes to server-managed relations (`up`, `linkset`, `lws#storage`, the LWS class `type`s) → `409`. `412` on a failed precondition (§9.4). The linkset is deleted with its resource |
+| **Linkset** `PATCH` / `PUT` | A JSON Patch applies to the **document a GET returns** (`/linkset/0/license`), not to the storage form. The result must still be a linkset for the same anchor (`422` otherwise). Changes to server-managed relations (`linkset`, `lws#storage`, the LWS class `type`s) → `409`. Another container as `up` moves the resource: `200` with the linkset, whose anchor is its new URI, and `Content-Location` ([§5.8](#58-moving-resources)); otherwise `204`. `412` on a failed precondition (§9.4). The linkset is deleted with its resource |
+| **Former URI** `GET/HEAD` | Where nothing exists, but a moved resource was: `301` with `Location`, to an agent who may read it where it is now; otherwise as for any URI where nothing exists ([§5.8](#58-moving-resources)) |
 | **`OPTIONS`** | `204` with `Allow` and `Accept-Patch` for that resource kind. Unauthenticated, as CORS preflight requires, so it is answered from the shape of the URL alone: it never reveals whether a resource exists |
 | **Errors** | `application/problem+json` (RFC 9457) everywhere |
 
@@ -450,7 +451,8 @@ LWS clients always read content through its LWS URL.
 - a resource and its parent's `version` are written in the same transaction;
 - `(parent, name)` is unique, so a concurrent create that loses retries with the next suffix;
 - the parent must be a container, so no orphans can exist;
-- there is no move operation, and names cannot contain `/`, so no cycles can form.
+- a container never moves into itself or below itself ([§5.8](#58-moving-resources)), and names
+  cannot contain `/`, so no cycles can form.
 
 ### 5.4 Request pipeline
 
@@ -507,7 +509,7 @@ LWS clients always read content through its LWS URL.
    [§6.7](#67-protected-resource-metadata-and-the-401-challenge)). A `405` adds `Allow`; a `415`
    adds `Accept-Patch`.
 8. **After commit.** The storage dispatches `LwsResourceEvent` (`created`, `updated`,
-   `metadata_updated`, `deleted`) once the transaction has committed: right after the
+   `metadata_updated`, `deleted`, `moved`) once the transaction has committed: right after the
    operation, or at the end of the request when an outer transaction committed it, never from
    the commit itself (S6). `lws_notify` and `lws_index` listen; nothing else depends on it.
 
@@ -528,6 +530,10 @@ Each tagged service contributes a `service` entry, and optionally `capability` e
       "application/json": ["application/json-patch+json", "application/merge-patch+json"],
       "application/linkset+json": ["application/json-patch+json", "application/merge-patch+json"]
     }
+  }, {
+    "type": "MoveResource",
+    "appliesTo": ["DataResource", "Container"],
+    "preservesIdentifier": false
   }],
   "service": [
     {"type": "StorageRoot", "serviceEndpoint": "https://site.example/lws/alice/root/"},
@@ -544,6 +550,11 @@ Each tagged service contributes a `service` entry, and optionally `capability` e
 `https://www.w3.org/ns/lws#PatchSupport`, so the two servers advertise patch support identically.
 That term is **not** defined in `lws10-vocab` yet, and it changes if the working group mints a
 different one. Clients must not depend on it; `Accept-Patch` is the normative signal.
+
+The `MoveResource` capability is a term of the `lws/v1` context. It names the kinds of resource
+`lws_storage.settings:move_applies_to` lets clients move, and is left out when that names none,
+or for a storage whose policy decision point refuses the writes of a move even to an agent that
+controls every storage, as a projection's does ([§5.8](#58-moving-resources)).
 
 ### 5.6 Container listings and pagination
 
@@ -606,6 +617,60 @@ different one. Clients must not depend on it; `Accept-Patch` is the normative si
   - `lws:storage:list`
   - `lws:storage:delete`
   - `lws:gc`
+
+### 5.8 Moving resources
+
+A client moves a resource by changing the `up` link of its linkset (Moving Resources, w3c/lws-protocol
+#237). Every linkset write works out which container it asks for: the `up` targets the patched
+document leaves, or those a `PUT` document names (one that leaves `up` out keeps it). Relative
+references are resolved against the linkset's URL; the URI is compared by its decoded segments.
+The container the resource is in is no move; any other is moved to in the transaction of the rest
+of the write (`StorageManager::changeLinkset()`), all or nothing:
+
+1. **Allowed?** `lws_storage.settings:move_applies_to` names `DataResource`, `Container`, both or
+   neither. A kind it leaves out → `409`, as before moves existed. Not a container URI of the same
+   storage, no target, two targets, the root → `409`.
+2. **Authorized,** before anything is told about the destination. `Modify` on the resource, by the
+   route's access check, as for any linkset write; then, on the locked rows, `Delete` on the
+   resource, `Create` on the destination as a `POST` there is judged, by its URI with the
+   resource's format and types, whether it exists or not; for a container, `Delete` on every
+   descendant, within `max_recursive_delete` (`422` beyond it). A refusal is a `403` (`401`
+   without a token, `404` with concealment).
+3. **Checked.** The destination must exist (`409`), and a container may not move into itself or
+   below itself (`409`, with the draft's problem detail). The name stays unless the destination
+   holds it or its twin; then it is chosen as for a taken `Slug`. A path past 2,048 characters,
+   the resource's or one below it → `409`.
+4. **Done.** The resource's `parent` and `name` change, and `LwsResource::preSave()` derives its
+   path; the paths and hashes of its descendants are rewritten by prefix, computed in PHP. Both
+   containers are touched, and a moved container's version too. Content, user metadata, creator,
+   UUIDs and so the linkset URLs stay.
+
+**Locks.** The resource's container and the resource, as every change locks them, then the
+destination, then the descendants down the tree. The destination is on another branch, so an
+operation that holds it and waits for one of these can hold up a move that waits for it; the
+database gives up on one of the two, which runs again (`transactional()`).
+
+**Identifiers.** URIs are derived from paths, so they are not preserved: the capability says
+`"preservesIdentifier": false`, and a move answers `200` with the linkset (anchor = the new URI)
+and `Content-Location` (its URL, unchanged). Where a resource was is recorded in
+`lws_resource_move` (storage, former path and its hash → resource ID), deleted with the resource
+or its storage. A `GET` or `HEAD` of a resource URI where nothing exists looks for the record of
+that path, or of the nearest container above it where nothing exists either, and follows the
+resource from there (further moves too); if it finds one the agent may read, the answer is `301`
+to its URI. The access check grants such a request on that read alone (`LwsAccessCheck::MOVED_ONLY`),
+so an agent who may read the resource only where it is now is redirected too, and the controller
+then serves nothing but the redirect. Anyone else gets the answer of a URI where nothing ever was.
+
+**What follows, and what does not.** Policies, grants and subscriptions name URIs, so they stay
+where they are: a moved resource is governed by the policies of where it is now (Security and
+Privacy Considerations, "Moving Resources Between Containers"). The type index is keyed by
+resource ID and searches read paths live, so it follows. Types read from content are read again
+for the moved resource, not for what a moved container holds, whose content states them of
+itself as `<>` all the same (`drush lws:index:rebuild` reads them all again). A move announces
+one `moved` event, of the resource, with its context before and after; `lws_notify` sends a
+`Move` (`origin`, `target`) to subscribers who may read it where it is now and whose
+subscriptions covered it before or cover it now, and a `Delete` of the former URI to those who
+could read it only where it was.
 
 ---
 
@@ -961,7 +1026,9 @@ are described briefly here; each gets its own design note when it starts.
   - `GET` lists the caller's live subscriptions as an LWS container; `GET`/`DELETE` act on one,
     for its agent or a controller.
 - **Delivery.**
-  1. `LwsResourceEvent`s become `Create`, `Update` or `Delete` activities (§10.2.3).
+  1. `LwsResourceEvent`s become `Create`, `Update`, `Delete` or `Move` activities (§10.2.3); a
+     subscriber who could read a moved resource only where it was gets a `Delete` of its former
+     URI ([§5.8](#58-moving-resources)).
   2. Each subscription that covers the resource is checked against the PDP **when the change is
      made**, for the subscriber's agent and client (§10.3.3). A queued retry checks again.
   3. A request's activities are batched, one notification per subscription or inbox, and
@@ -1093,8 +1160,9 @@ resource metadata. `lws` handles CORS for its own paths with a response subscrib
 - methods: `GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS, QUERY`;
 - allowed headers include `Authorization`, `Content-Type`, `If-Match`, `If-None-Match`,
   `If-Modified-Since`, `If-Unmodified-Since`, `Link`, `Slug`, `Prefer`, `Depth`, `Range`;
-- exposed headers: `Link`, `Location`, `ETag`, `Last-Modified`, `WWW-Authenticate`, `Allow`,
-  `Accept-Patch`, `Accept-Query`, `Content-Range`, `Preference-Applied`, `Vary`;
+- exposed headers: `Link`, `Location`, `Content-Location`, `ETag`, `Last-Modified`,
+  `WWW-Authenticate`, `Allow`, `Accept-Patch`, `Accept-Query`, `Content-Range`,
+  `Preference-Applied`, `Vary`;
 - no credentials (cookies are never used).
 
 Core's site-wide `cors.config` can stay off.
@@ -1124,9 +1192,10 @@ Core's site-wide `cors.config` can stay off.
 | Token theft and replay | Tokens last ≤300 s and are bound to one audience. Tokens are never logged (hash prefixes only). `Cache-Control: no-store` on token responses. DPoP is a later step ([§14](#14-open-questions)) |
 | JOSE pitfalls | `alg` allow-list per key type. `none` and `HS*` are rejected. The key type must match `alg`. `typ` is checked. The `kid` must belong to the expected issuer or subject |
 | SSRF through `sub`, `iss`, `jwks_uri` and inbox URLs | `lws.outbound_http` guard ([§6.4](#64-authentication-suites)) |
-| Resource exhaustion | Quotas (`507`), upload caps, recursive-delete limit (`lws_storage.settings:max_recursive_delete`; above it → `422` with a problem detail), page-size cap, flood control on the token endpoint, access-request service and subscriptions. Since S5: bodies are refused by their `Content-Length` before they are read (`413`, or `507` when the quota cannot hold them), small bodies (linksets, patches, access documents) are read no further than their limit, a recursive delete counts before it loads or locks anything, a filtered listing examines a bounded number of members, a patch has at most 1,000 operations and 32 `copy`s, and a patched document may not grow past its limit, user types are at most 32 URIs of at most 2,048 bytes, and paths at most 2,048 characters |
+| Resource exhaustion | Quotas (`507`), upload caps, recursive-delete limit (`lws_storage.settings:max_recursive_delete`, which bounds the move of a container too; above it → `422` with a problem detail), page-size cap, flood control on the token endpoint, access-request service and subscriptions. Since S5: bodies are refused by their `Content-Length` before they are read (`413`, or `507` when the quota cannot hold them), small bodies (linksets, patches, access documents) are read no further than their limit, a recursive delete counts before it loads or locks anything, a filtered listing examines a bounded number of members, a patch has at most 1,000 operations and 32 `copy`s, and a patched document may not grow past its limit, user types are at most 32 URIs of at most 2,048 bytes, and paths at most 2,048 characters |
 | Bypassing LWS policy through core's private-file route (`/system/files/…`) or image styles | `hook_file_download()` returns `-1` for every LWS file to users without `administer lws storages` ([§5.3](#53-content-as-managed-files)). Administrators get it as an attachment, with `CSP: sandbox` (S5) |
-| Information disclosure | Listings filtered per agent (§7.5). Optional `404` concealment. Problem details never echo token contents. Grants and requests visible only to the parties involved (§17.1) |
+| Information disclosure | Listings filtered per agent (§7.5). Optional `404` concealment. Problem details never echo token contents. Grants and requests visible only to the parties involved (§17.1). A former URI redirects only an agent who may read the moved resource, and a move is told to a subscriber who may not read it where it is now as a `Delete` ([§5.8](#58-moving-resources)) |
+| Moves widening or narrowing access | A move needs `Delete` on the resource and all it holds and `Create` in the destination, so it reaches no further than a delete and a create would. Policies are not moved: the destination's apply. The capability is described only for what `move_applies_to` names, and moving can be turned off |
 | Path traversal and name tricks | Content file URIs are made of UUIDs. Names are segment-validated: no `/`, `.` or `..`, no control characters, case-sensitive. Names made from `Slug` are ASCII (`[A-Za-z0-9._~-]`), so there is nothing to normalise; only `createContainer()` (Drush, tests) takes others, as given. A name and its twin with or without the slash (`notes`, `notes/`) are never both taken, and policy targets match exactly. Paths are at most 2,048 characters (`400` beyond) |
 
 ### 8.5 Logging and audit
@@ -2427,6 +2496,13 @@ makes. Where `lws-server` (the Java implementation) chose differently, that is n
 | 19 | The LWS profile beyond containers | The notification service's listing and the access request and grant services, which are LWS containers, negotiate as containers do. Their entries, the type index and pages of search results are in no profile: JSON-LD asked for in one is not chosen for them, and none is named | The profile is defined for container representations, and lws10-index says a search's `ContainerPage` is not one. *`lws-server` does the same* |
 | 20 | `as_uri` and `realm` in challenges | Still sent, after `resource_metadata`, unless `lws_authz.settings:legacy_challenge` is off | The drafts of 19 October 2026 replaced them but allow other parameters, and clients of earlier drafts look for them. *`lws-server` does the same (`lws.oauth.legacy-challenge`)* |
 | 21 | Protected resource metadata of URLs that name no protected resource | `404` for a path that names no storage, a storage without an authorization server, or a place where nothing can be; the same document for every other URL of a storage, whether anything is there or not | Storages are public, so the `404` reveals nothing, and within a storage nothing stored is looked up ([§6.7](#67-protected-resource-metadata-and-the-401-challenge)). *`lws-server` holds one storage, and answers every path alike* |
+| 22 | Identifiers of moved resources | Not preserved (`"preservesIdentifier": false`): the URI is the destination's and the name; the linkset URL stays | URIs are derived from paths, as in the draft's second example. *`lws-server` does the same* |
+| 23 | Former URIs | `301` to `GET`/`HEAD`, for an agent who may read the resource where it is now, even if it may not read where it was; otherwise as if nothing had moved. Kept until the resource or its storage is deleted; a resource made there takes the URI over | Moving Resources SHOULD `301`; Privacy Considerations: the same access control as the moved resource, or `404` |
+| 24 | Destination in another storage | Refused (`409`) | The draft allows refusing it |
+| 25 | Name taken in the destination | Another name, as for a taken `Slug` (`a.txt` → `a-1.txt`) | The draft is silent; refusing would make some moves impossible |
+| 26 | Relative `up` targets | Resolved against the linkset's URL (RFC 9264, RFC 3986 §5); other relations need absolute URIs | The draft's own example uses `/alice/archive/` |
+| 27 | Path too long after a move | Refused (`409`), as the destination is too deep | Creates refuse it with `400`, as the request names the nesting |
+| 28 | Notifications of a move | One `Move` to a subscriber who may read the resource where it is now; a `Delete` of the former URI to one who could read it only where it was; nothing for what a moved container holds | The draft asks for one `Move`; a subscriber who may not read the new place must not learn it |
 
 ---
 

@@ -14,6 +14,8 @@ use Ebremer\Lws\Http\LinkHeader;
 use Ebremer\Lws\Json\Json;
 use Ebremer\Lws\LinkRelation;
 use Ebremer\Lws\Vocabulary;
+use GuzzleHttp\Psr7\Uri;
+use GuzzleHttp\Psr7\UriResolver;
 
 /**
  * Linkset documents of resources (LWS Core §9.1, RFC 9264).
@@ -22,7 +24,10 @@ use Ebremer\Lws\Vocabulary;
  * derives (up, and the LWS class among the types), and the relations its
  * clients manage. Clients set those with Link headers on create, with
  * "Prefer: set-linkset" on updates, or by changing the linkset itself; none
- * of these can change a server-managed relation.
+ * of these can change a server-managed relation, but for "up" in the
+ * linkset itself: a client moves a resource to another container by changing
+ * it (LWS Core, Moving Resources), which StorageManager::changeLinkset()
+ * decides on.
  */
 final class Linksets {
 
@@ -140,7 +145,7 @@ final class Linksets {
   }
 
   /**
-   * User metadata from a linkset document a client sent or a patch made.
+   * What a linkset document a client sent, or a patch made, asks for.
    *
    * @param mixed $document
    *   The document, as Json::decode() returns it.
@@ -153,11 +158,15 @@ final class Linksets {
    *   result of patching the document a GET returns; a document a client
    *   PUTs may leave them out.
    *
+   * @return \Drupal\lws_storage\Linkset\LinksetUpdate
+   *   The links clients manage, and the container the "up" link names.
+   *
    * @throws \Drupal\lws\Http\LwsHttpException
    *   422 when it is not a linkset of the resource; 409 when it would change
-   *   a server-managed relation.
+   *   a server-managed relation other than "up", or leave the resource in
+   *   no container or in more than one.
    */
-  public function fromDocument(mixed $document, LwsStorageInterface $storage, LwsResourceInterface $resource, bool $complete): UserMetadata {
+  public function fromDocument(mixed $document, LwsStorageInterface $storage, LwsResourceInterface $resource, bool $complete): LinksetUpdate {
     $linkset = Json::members($document)['linkset'] ?? NULL;
     $context = Json::isList($linkset) && count($linkset) === 1 ? self::members($linkset[0]) : NULL;
     if ($context === NULL) {
@@ -167,17 +176,19 @@ final class Linksets {
     if (array_key_exists('anchor', $context) && $context['anchor'] !== $uri) {
       throw LwsHttpException::unprocessable('The linkset may only hold links whose anchor is the resource, ' . $uri . '.');
     }
-    $parent = $resource->getParent();
-    $up = $parent === NULL ? NULL : $this->links->uri($storage, $parent);
     $class = $this->links->type($resource);
 
     $types = [];
     $links = [];
     $sawClass = FALSE;
-    $sawUp = FALSE;
+    $ups = NULL;
     foreach ($context as $name => $value) {
       $rel = LinkHeader::normalizeRel((string) $name);
       if ($rel === 'anchor') {
+        continue;
+      }
+      if ($rel === LinkRelation::UP) {
+        $ups = [...($ups ?? []), ...self::upTargets($value, $this->links->linksetUri($storage, $resource))];
         continue;
       }
       $targets = self::targets($value, $rel);
@@ -196,19 +207,106 @@ final class Linksets {
         }
       }
       elseif (self::isServerManaged($rel)) {
-        if ($rel !== LinkRelation::UP || $hrefs !== [$up]) {
-          throw LwsHttpException::conflict(sprintf('The "%s" relation is server-managed and cannot be changed.', $rel));
-        }
-        $sawUp = TRUE;
+        throw LwsHttpException::conflict(sprintf('The "%s" relation is server-managed and cannot be changed.', $rel));
       }
       elseif ($targets !== []) {
         $links[$rel] = $targets;
       }
     }
-    if ($complete && (!$sawClass || ($up !== NULL && !$sawUp))) {
-      throw LwsHttpException::conflict('The "up" relation and the LWS class among the types are server-managed and cannot be removed.');
+    if ($complete && !$sawClass) {
+      throw LwsHttpException::conflict('The LWS class among the types is server-managed and cannot be removed.');
     }
-    return new UserMetadata(self::limitTypes($types), $links);
+    return new LinksetUpdate(new UserMetadata(self::limitTypes($types), $links), self::up($resource, $ups, $complete));
+  }
+
+  /**
+   * The container a linkset document asks its resource to be in.
+   *
+   * Every resource but the storage root is in one container (LWS Core §7.3),
+   * so the "up" link of any other has one target, and the root's none.
+   *
+   * @param \Drupal\lws_storage\Entity\LwsResourceInterface $resource
+   *   The resource.
+   * @param list<string>|null $ups
+   *   The targets of the "up" link, as absolute URIs; NULL when the document
+   *   has none.
+   * @param bool $complete
+   *   Whether the document must still have the link.
+   *
+   * @return string|null
+   *   The container's URI; NULL when the document leaves the resource where
+   *   it is without naming it, or it is the root.
+   *
+   * @throws \Drupal\lws\Http\LwsHttpException
+   *   409 for any other number of targets.
+   */
+  private static function up(LwsResourceInterface $resource, ?array $ups, bool $complete): ?string {
+    if ($resource->isRoot()) {
+      if ($ups !== NULL && $ups !== []) {
+        throw LwsHttpException::conflict('The storage root is in no container, so it has no "up" link.');
+      }
+      return NULL;
+    }
+    if ($ups === NULL && !$complete) {
+      return NULL;
+    }
+    if ($ups === NULL || $ups === []) {
+      throw LwsHttpException::conflict('Every resource but the storage root is in a container, so its "up" link cannot be removed.');
+    }
+    if (count($ups) > 1) {
+      throw LwsHttpException::conflict('A resource is in one container, so its "up" link has one target.');
+    }
+    return $ups[0];
+  }
+
+  /**
+   * The targets of the "up" relation in a linkset document, as absolute URIs.
+   *
+   * A target may be a relative reference, which is resolved against the URL
+   * of the linkset (RFC 9264 §4.2.2, RFC 3986 §5), as in LWS Core's own
+   * example of a move. The links of other relations must be absolute.
+   *
+   * @return list<string>
+   *   The URIs.
+   *
+   * @throws \Drupal\lws\Http\LwsHttpException
+   *   422 when they are not an array of target objects whose "href" is a URI
+   *   reference.
+   */
+  private static function upTargets(mixed $value, string $base): array {
+    if (!Json::isList($value)) {
+      throw LwsHttpException::unprocessable('The "up" relation must be an array of target objects.');
+    }
+    $hrefs = [];
+    foreach ($value as $target) {
+      $href = (self::members($target) ?? [])['href'] ?? NULL;
+      $resolved = is_string($href) ? self::resolve($base, $href) : NULL;
+      if ($resolved === NULL) {
+        throw LwsHttpException::unprocessable('Every target of the "up" relation needs an "href" that is a URI reference.');
+      }
+      $hrefs[] = $resolved;
+    }
+    return $hrefs;
+  }
+
+  /**
+   * A URI reference resolved against a base URI (RFC 3986 §5).
+   *
+   * Unlike the targets clients set, it is never stored, so it may be longer
+   * than MAX_HREF_BYTES, as the URI of a deeply nested container is.
+   *
+   * @return string|null
+   *   The absolute URI; NULL when the reference is not one, or resolves to
+   *   one that cannot be sent as it is.
+   */
+  private static function resolve(string $base, string $reference): ?string {
+    try {
+      $uri = (string) UriResolver::resolve(new Uri($base), new Uri($reference));
+    }
+    catch (\InvalidArgumentException) {
+      return NULL;
+    }
+    return preg_match(self::ABSOLUTE_URI, $uri) === 1 ? $uri : NULL;
   }
 
   /**

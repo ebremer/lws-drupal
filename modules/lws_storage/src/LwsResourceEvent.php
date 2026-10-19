@@ -8,13 +8,13 @@ use Drupal\Component\EventDispatcher\Event;
 use Drupal\lws\Access\ResourceContext;
 
 /**
- * A container or data resource was created, changed or deleted.
+ * A container or data resource was created, changed, moved or deleted.
  *
  * Dispatched once the change is committed (DESIGN.md §5.4), so a listener
  * never hears of a change that was rolled back. A recursive delete
- * dispatches one event per resource it removed, its members first.
- * lws_notify turns these into notifications; nothing in the storage depends
- * on them.
+ * dispatches one event per resource it removed, its members first; a move,
+ * one for the resource it moved, whatever that holds. lws_notify turns these
+ * into notifications; nothing in the storage depends on them.
  */
 final class LwsResourceEvent extends Event {
 
@@ -39,6 +39,13 @@ final class LwsResourceEvent extends Event {
   public const DELETED = 'lws_storage.resource.deleted';
 
   /**
+   * A resource was moved to another container, and so to another URI.
+   *
+   * What a moved container holds moved with it, and is not announced.
+   */
+  public const MOVED = 'lws_storage.resource.moved';
+
+  /**
    * Constructs the event.
    *
    * @param \Drupal\lws\Access\ResourceContext $resource
@@ -50,12 +57,16 @@ final class LwsResourceEvent extends Event {
    *   Its UUID.
    * @param float $time
    *   When the change was made, in seconds since the epoch.
+   * @param \Drupal\lws\Access\ResourceContext|null $previous
+   *   For a moved resource, what the policy decision point knew about it
+   *   before it moved: its former URI and the containers above it then.
    */
   public function __construct(
     public readonly ResourceContext $resource,
     public readonly int $id,
     public readonly string $uuid,
     public readonly float $time,
+    public readonly ?ResourceContext $previous = NULL,
   ) {}
 
   /**
@@ -63,6 +74,14 @@ final class LwsResourceEvent extends Event {
    */
   public function parentUri(): ?string {
     $ancestors = $this->resource->ancestors;
+    return $ancestors === [] ? NULL : $ancestors[count($ancestors) - 1];
+  }
+
+  /**
+   * For a moved resource, the URI of the container it left.
+   */
+  public function previousParentUri(): ?string {
+    $ancestors = $this->previous->ancestors ?? [];
     return $ancestors === [] ? NULL : $ancestors[count($ancestors) - 1];
   }
 

@@ -13,8 +13,8 @@ use Ebremer\Lws\ResourceType;
  *
  * Each has an "id", a "type" array, an "object" with the resource's "id" and
  * "type" array, and a "published" time; a Create names the container the
- * resource was added to as its "target", and a Delete the one it was removed
- * from as its "origin" (§10.2.3).
+ * resource was added to as its "target", a Delete the one it was removed
+ * from as its "origin", and a Move both (§10.2.3, Moving Resources).
  */
 final class Activities {
 
@@ -26,6 +26,7 @@ final class Activities {
     LwsResourceEvent::UPDATED => ActivityType::UPDATE,
     LwsResourceEvent::METADATA_UPDATED => ActivityType::UPDATE,
     LwsResourceEvent::DELETED => ActivityType::DELETE,
+    LwsResourceEvent::MOVED => ActivityType::MOVE,
   ];
 
   /**
@@ -67,6 +68,13 @@ final class Activities {
     }
     if ($parent !== NULL && $type === ActivityType::DELETE) {
       $activity['origin'] = $parent;
+    }
+    // The resource as it is after the move, from the container it left to
+    // the one it joined.
+    $origin = $event->previousParentUri();
+    if ($parent !== NULL && $origin !== NULL && $type === ActivityType::MOVE) {
+      $activity['origin'] = $origin;
+      $activity['target'] = $parent;
     }
     if ($actor !== NULL) {
       $activity['actor'] = $actor;

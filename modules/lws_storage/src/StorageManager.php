@@ -18,15 +18,21 @@ use Drupal\Core\Session\AccountInterface;
 use Drupal\file\FileInterface;
 use Drupal\file\FileUsage\FileUsageInterface;
 use Drupal\file\Validation\FileValidatorInterface;
+use Drupal\lws\Access\Action;
+use Drupal\lws\Access\ResourceChange;
+use Drupal\lws\Access\ResourceContext;
 use Drupal\lws\Agent\RequestingAgent;
 use Drupal\lws\Database\TransactionConflict;
 use Drupal\lws\Http\LwsHttpException;
+use Drupal\lws\Routing\LwsArea;
+use Drupal\lws\Routing\LwsTarget;
 use Drupal\lws\Routing\ResourceName;
 use Drupal\lws_authz\Server\LocalAuthorizationServer;
 use Drupal\lws_storage\Content\ContentStore;
 use Drupal\lws_storage\Content\StoredContent;
 use Drupal\lws_storage\Entity\LwsResourceInterface;
 use Drupal\lws_storage\Entity\LwsStorageInterface;
+use Drupal\lws_storage\Linkset\LinksetUpdate;
 use Drupal\lws_storage\Linkset\UserMetadata;
 use Symfony\Component\EventDispatcher\EventDispatcherInterface as SymfonyEventDispatcherInterface;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
@@ -48,9 +54,14 @@ use Symfony\Contracts\EventDispatcher\EventDispatcherInterface;
  * Every transaction locks rows in one order: down the tree, a container
  * before its members, and the storage's own row, for its quota, last. Two
  * operations that need the same rows then wait for each other in turn,
- * rather than each holding what the other needs. When the database still
- * gives up on a transaction because of a concurrent one, on a deadlock or a
- * lock it waited too long for, the operation runs again (transactional()).
+ * rather than each holding what the other needs. A move is the one operation
+ * on two branches of the tree: it locks the resource's container and the
+ * resource, as every change does, then the destination container, then the
+ * resource's members, down the tree (changeLinkset()). An operation that
+ * holds the destination and waits for one of those can then hold up a move
+ * that waits for it. When the database gives up on a transaction because of
+ * a concurrent one, on such a deadlock or a lock it waited too long for, the
+ * operation runs again (transactional()).
  */
 final class StorageManager implements DestructableInterface {
 
@@ -90,6 +101,7 @@ final class StorageManager implements DestructableInterface {
     private readonly EventDispatcherInterface $events,
     private readonly ResourceLinks $links,
     private readonly AccountInterface $currentUser,
+    private readonly ResourceMoves $moves,
   ) {}
 
   /**
@@ -210,10 +222,7 @@ final class StorageManager implements DestructableInterface {
         $this->validate($content, $mediaType);
       }
       foreach (ResourceNames::candidates($hint, $container, $this->uuid->generate(...)) as $name) {
-        // A name is taken by its twin with or without the slash too: "notes"
-        // and "notes/" side by side would read as one resource to people.
-        $twin = str_ends_with($name, '/') ? substr($name, 0, -1) : $name . '/';
-        if ($this->resources->findChild($parent, $name) !== NULL || $this->resources->findChild($parent, $twin) !== NULL) {
+        if (!$this->isFree($parent, $name)) {
           continue;
         }
         try {
@@ -369,13 +378,72 @@ final class StorageManager implements DestructableInterface {
    *   The resource with its new links.
    */
   public function changeMetadata(LwsResourceInterface $resource, \Closure $change, ?callable $precondition = NULL): LwsResourceInterface {
+    return $this->changeLinkset($resource, static fn (LwsResourceInterface $current): LinksetUpdate => new LinksetUpdate($change($current)), $precondition);
+  }
+
+  /**
+   * Changes the linkset of a resource, as it is once locked, and may move it.
+   *
+   * The change gives the links clients manage, which replace the current
+   * ones, and may name the container the resource is to be in, with its
+   * "up" link. The one it is in leaves it there. Another moves it there, in
+   * the same transaction (LWS Core, Moving Resources), provided that:
+   *
+   * - clients may move resources of its kind (ResourceMoves);
+   * - the destination is a container of the same storage, and not the
+   *   resource or a container in it;
+   * - the agent may delete the resource and, for a container, everything in
+   *   it, as a recursive delete needs, and may create in the destination.
+   *
+   * The resource keeps its name, unless the destination holds it already,
+   * and so takes a new URI: the destination's and its name. A container
+   * takes what it holds along, each in its place. Content, the links clients
+   * manage, the creator and the linkset's URL stay.
+   *
+   * @param \Drupal\lws_storage\Entity\LwsResourceInterface $resource
+   *   The resource.
+   * @param \Closure(\Drupal\lws_storage\Entity\LwsResourceInterface): \Drupal\lws_storage\Linkset\LinksetUpdate $change
+   *   Makes the update from the locked resource; throws to refuse.
+   * @param callable(\Drupal\lws_storage\Entity\LwsResourceInterface): void|null $precondition
+   *   Checks the request's preconditions against the locked resource.
+   * @param \Closure(\Drupal\lws\Access\Action, \Drupal\lws\Access\ResourceContext): bool|null $authorize
+   *   Whether the agent may perform an action on a resource, which a move
+   *   asks of the resources it would delete and of the destination; NULL
+   *   allows any move.
+   * @param bool|null $moved
+   *   Set to whether the resource moved.
+   *
+   * @param-out bool $moved
+   *
+   * @return \Drupal\lws_storage\Entity\LwsResourceInterface
+   *   The resource with its new links, where it is now.
+   *
+   * @throws \Drupal\lws\Http\LwsHttpException
+   *   404 if it was deleted meanwhile; for a move, 409 when it may not move,
+   *   or not there, and 422 for a container with more resources than a
+   *   recursive delete may remove.
+   * @throws \Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException
+   *   When the agent may not move it there.
+   */
+  public function changeLinkset(LwsResourceInterface $resource, \Closure $change, ?callable $precondition = NULL, ?\Closure $authorize = NULL, ?bool &$moved = NULL): LwsResourceInterface {
+    $moved = FALSE;
+    // What a move changed besides the resource and its container, which a
+    // rollback leaves cached as it was inside the transaction.
+    /** @var list<int> $changed */
+    $changed = [];
     return $this->transactional(
-      function () use ($resource, $change, $precondition): LwsResourceInterface {
+      function () use ($resource, $change, $precondition, $authorize, &$moved, &$changed): LwsResourceInterface {
         $current = $this->lock($resource);
         if ($precondition !== NULL) {
           $precondition($current);
         }
-        $current->setUserMetadata($change($current), $this->time->getRequestTime());
+        $update = $change($current);
+        $destination = $update->up === NULL ? NULL : $this->destination($current, $update->up);
+        if ($destination !== NULL) {
+          $moved = TRUE;
+          return $this->move($current, $destination, $update->metadata, $authorize, $changed);
+        }
+        $current->setUserMetadata($update->metadata, $this->time->getRequestTime());
         $current->save();
         // Listings show members' types.
         $parent = $current->getParent();
@@ -385,8 +453,203 @@ final class StorageManager implements DestructableInterface {
         $this->announce(LwsResourceEvent::METADATA_UPDATED, [$current]);
         return $current;
       },
-      fn () => $this->forget($resource, $resource->getParent()),
+      function () use ($resource, &$moved, &$changed): void {
+        $moved = FALSE;
+        $this->entityTypeManager->getStorage('lws_resource')->resetCache($changed);
+        $changed = [];
+        $this->forget($resource, $resource->getParent());
+      },
     );
+  }
+
+  /**
+   * The container a resource's linkset asks it to move to, if another.
+   *
+   * @param \Drupal\lws_storage\Entity\LwsResourceInterface $current
+   *   The locked resource.
+   * @param string $up
+   *   The URI its "up" link names.
+   *
+   * @return \Drupal\lws\Routing\LwsTarget|null
+   *   The destination, as its URI addresses it, whether it exists or not;
+   *   NULL for the container the resource is in, however its URI is spelt.
+   *
+   * @throws \Drupal\lws\Http\LwsHttpException
+   *   409 when clients may not move the resource, or the URI is not one of a
+   *   container of its storage.
+   */
+  private function destination(LwsResourceInterface $current, string $up): ?LwsTarget {
+    $storage = $this->storageOf($current);
+    $slug = $storage->getSlug();
+    $target = $this->links->targetOf($up);
+    $parent = $current->getParent();
+    if ($parent !== NULL && $target !== NULL && $target->area === LwsArea::Resource && $target->storage === $slug && $target->container && $target->segments === $parent->getSegments()) {
+      return NULL;
+    }
+    if ($parent === NULL || !$this->moves->allows($current)) {
+      // As a storage that lets no client change "up" answers.
+      throw LwsHttpException::conflict($this->moves->appliesTo() === [] || $parent === NULL
+        ? 'The "up" relation is server-managed and cannot be changed.'
+        : sprintf('This storage lets clients move only %s; the "up" relation of %s is server-managed and cannot be changed.', $current->isContainer() ? 'data resources' : 'containers', $current->isContainer() ? 'a container' : 'a data resource'));
+    }
+    if ($target !== NULL && $target->storage !== NULL && $target->storage !== $slug) {
+      throw LwsHttpException::conflict(sprintf('A resource can only move to another container of its own storage, %s.', $this->links->storageUri($storage)));
+    }
+    if ($target === NULL || $target->area !== LwsArea::Resource || !$target->container) {
+      throw LwsHttpException::conflict(sprintf('The "up" link must name a container of this storage: its root container, %s, or a URI below it that ends in a slash.', $this->links->context($storage, ['root'], TRUE)->uri));
+    }
+    return $target;
+  }
+
+  /**
+   * Moves a locked resource to another container of its storage.
+   *
+   * Inside the transaction of changeLinkset(), which locked the resource and
+   * its container. The destination is authorized as a POST to it would be,
+   * by its URI, before anything is told about it; then it is locked, and
+   * then the resource's members, down the tree.
+   *
+   * @param \Drupal\lws_storage\Entity\LwsResourceInterface $current
+   *   The locked resource; never the storage root.
+   * @param \Drupal\lws\Routing\LwsTarget $target
+   *   The destination container, as its URI addresses it.
+   * @param \Drupal\lws_storage\Linkset\UserMetadata $metadata
+   *   The links clients manage, which the same write sets.
+   * @param \Closure(\Drupal\lws\Access\Action, \Drupal\lws\Access\ResourceContext): bool|null $authorize
+   *   Whether the agent may perform an action on a resource.
+   * @param list<int> $changed
+   *   Gets the IDs of the other resources the move changes.
+   *
+   * @return \Drupal\lws_storage\Entity\LwsResourceInterface
+   *   The resource, where it is now.
+   */
+  private function move(LwsResourceInterface $current, LwsTarget $target, UserMetadata $metadata, ?\Closure $authorize, array &$changed): LwsResourceInterface {
+    $storage = $this->storageOf($current);
+    $from = $current->getPath();
+    $to = implode('/', $target->segments) . '/';
+    $destinationContext = $this->links->context($storage, $target->segments, TRUE);
+    if ($current->isContainer() && str_starts_with($to, $from)) {
+      $uri = $this->links->uri($storage, $current);
+      throw LwsHttpException::conflict($to === $from
+        ? sprintf('Cannot move a container into itself, %s.', $uri)
+        : sprintf('Cannot move a container into one of its own descendants: %s is a descendant of %s.', $destinationContext->uri, $uri));
+    }
+    $previous = $this->links->contextOf($storage, $current);
+    if ($authorize !== NULL) {
+      // What arrives in the destination: the resource as the write leaves it.
+      $arriving = new ResourceChange(
+        $current->isContainer() ? NULL : $current->getMediaType(),
+        array_values(array_unique([$this->links->type($current), ...$metadata->types])),
+      );
+      if (!$authorize(Action::Delete, $previous) || !$authorize(Action::Create, $destinationContext->withChange($arriving))) {
+        throw new AccessDeniedHttpException('Moving a resource needs deleting it, and creating in the container it moves to.');
+      }
+    }
+    $destination = $this->lockContainer($storage, $to)
+      ?? throw LwsHttpException::conflict(sprintf('There is no container %s to move the resource to.', $destinationContext->uri));
+    $members = [];
+    if ($current->isContainer() && $this->resources->hasMembers($current)) {
+      $members = $this->lockMembers($current, 'The container holds more resources than one request may move (%d). Move some of its members first.');
+      if ($authorize !== NULL) {
+        foreach ($this->links->contextsOf($storage, $members) as $context) {
+          if (!$authorize(Action::Delete, $context)) {
+            throw new AccessDeniedHttpException('Moving a container needs deleting everything in it, as a recursive delete does.');
+          }
+        }
+      }
+    }
+
+    $name = $this->freeName($destination, $current);
+    $path = $destination->getPath() . $name;
+    $below = 0;
+    foreach ($members as $member) {
+      $below = max($below, mb_strlen($member->getPath()) - mb_strlen($from));
+    }
+    if (mb_strlen($path) + $below > LwsResourceInterface::MAX_PATH_LENGTH) {
+      throw LwsHttpException::conflict(sprintf('The resource would be nested too deeply there: its path, or that of a resource in it, would be longer than %d characters.', LwsResourceInterface::MAX_PATH_LENGTH));
+    }
+
+    $former = $current->getParent();
+    $current->set('parent', $destination);
+    $current->set('name', $name);
+    if ($current->isContainer()) {
+      // Its listing names it and its members by their new URIs.
+      $current->set('version', $current->getVersion() + 1);
+    }
+    $current->setUserMetadata($metadata, $this->time->getRequestTime());
+    // Which derives its new path (LwsResource::preSave()).
+    $current->save();
+    $ids = [(int) $destination->id()];
+    foreach ($members as $member) {
+      $memberPath = $path . substr($member->getPath(), strlen($from));
+      $this->database->update('lws_resource')
+        ->fields(['path' => $memberPath, 'path_hash' => hash('sha256', $memberPath)])
+        ->condition('id', $member->id())
+        ->execute();
+      $ids[] = (int) $member->id();
+    }
+    array_push($changed, ...$ids);
+    if ($former !== NULL) {
+      $this->resources->touch($former);
+      $ids[] = (int) $former->id();
+    }
+    $this->resources->touch($destination);
+    $this->moves->record($current, $from);
+    $entities = $this->entityTypeManager->getStorage('lws_resource');
+    $entities->resetCache($ids);
+    // Again once committed: a concurrent request may have cached one as it
+    // still was meanwhile.
+    $ids[] = (int) $current->id();
+    $this->database->transactionManager()->addPostTransactionCallback(static function () use ($entities, $ids): void {
+      $entities->resetCache($ids);
+    });
+    $this->announce(LwsResourceEvent::MOVED, [$current], $previous);
+    return $current;
+  }
+
+  /**
+   * Locks the container at a path, and loads it as it is now.
+   *
+   * @return \Drupal\lws_storage\Entity\LwsResourceInterface|null
+   *   The container; NULL if there is none there, now that it is locked.
+   */
+  private function lockContainer(LwsStorageInterface $storage, string $path): ?LwsResourceInterface {
+    $found = $this->resources->findByPath($storage, $path);
+    if ($found === NULL || !$this->lockRow((int) $found->id())) {
+      return NULL;
+    }
+    $locked = $this->entityTypeManager->getStorage('lws_resource')->loadUnchanged((int) $found->id());
+    // It may have moved before it was locked.
+    return $locked instanceof LwsResourceInterface && $locked->getPath() === $path && $locked->isContainer() ? $locked : NULL;
+  }
+
+  /**
+   * The name a moved resource takes in its new container.
+   *
+   * Its own, unless the container holds it already; then one made from it
+   * as from a taken Slug (createResource()).
+   */
+  private function freeName(LwsResourceInterface $container, LwsResourceInterface $resource): string {
+    $name = $resource->getName();
+    $isContainer = $resource->isContainer();
+    $candidates = [$name, ...ResourceNames::candidates(rtrim($name, '/'), $isContainer, $this->uuid->generate(...))];
+    foreach ($candidates as $candidate) {
+      if ($this->isFree($container, $candidate)) {
+        return $candidate;
+      }
+    }
+    throw LwsHttpException::conflict('No name is free for the resource in the container it moves to.');
+  }
+
+  /**
+   * Whether a container has no member of a name.
+   *
+   * A name is taken by its twin with or without the slash too: "notes" and
+   * "notes/" side by side would read as one resource to people.
+   */
+  private function isFree(LwsResourceInterface $container, string $name): bool {
+    $twin = str_ends_with($name, '/') ? substr($name, 0, -1) : $name . '/';
+    return $this->resources->findChild($container, $name) === NULL && $this->resources->findChild($container, $twin) === NULL;
   }
 
   /**
@@ -458,17 +721,7 @@ final class StorageManager implements DestructableInterface {
           if (!$recursive) {
             throw LwsHttpException::conflict('The container is not empty. Send "Depth: infinity" to delete it with its members.');
           }
-          // Counted before anything is loaded or locked, and checked again
-          // once it is. The count is not told: the agent may not see them all.
-          $limit = (int) $this->configFactory->get('lws_storage.settings')->get('max_recursive_delete');
-          $tooMany = LwsHttpException::unprocessable(sprintf('The container holds more resources than one request may delete (%d). Delete some of its members first.', $limit));
-          if ($limit > 0 && $this->resources->countDescendants($current, $limit + 1) > $limit) {
-            throw $tooMany;
-          }
-          $members = $this->resources->descendants($current, TRUE);
-          if ($limit > 0 && count($members) > $limit) {
-            throw $tooMany;
-          }
+          $members = $this->lockMembers($current, 'The container holds more resources than one request may delete (%d). Delete some of its members first.');
         }
         if ($mayDelete !== NULL) {
           foreach ($members as $member) {
@@ -512,6 +765,37 @@ final class StorageManager implements DestructableInterface {
       },
       fn () => $this->forget($resource, $resource->getParent()),
     );
+  }
+
+  /**
+   * Locks and loads everything in a container, within the recursive limit.
+   *
+   * The limit is lws_storage.settings:max_recursive_delete, for deletes and
+   * moves alike.
+   *
+   * @param \Drupal\lws_storage\Entity\LwsResourceInterface $container
+   *   The locked container.
+   * @param string $tooMany
+   *   What a 422 says when there are more, with %d for the limit.
+   *
+   * @return list<\Drupal\lws_storage\Entity\LwsResourceInterface>
+   *   The resources, deepest first.
+   *
+   * @throws \Drupal\lws\Http\LwsHttpException
+   *   422 when there are more than the limit.
+   */
+  private function lockMembers(LwsResourceInterface $container, string $tooMany): array {
+    // Counted before anything is loaded or locked, and checked again once it
+    // is. The count is not told: the agent may not see them all.
+    $limit = (int) $this->configFactory->get('lws_storage.settings')->get('max_recursive_delete');
+    if ($limit > 0 && $this->resources->countDescendants($container, $limit + 1) > $limit) {
+      throw LwsHttpException::unprocessable(sprintf($tooMany, $limit));
+    }
+    $members = $this->resources->descendants($container, TRUE);
+    if ($limit > 0 && count($members) > $limit) {
+      throw LwsHttpException::unprocessable(sprintf($tooMany, $limit));
+    }
+    return $members;
   }
 
   /**
@@ -675,8 +959,10 @@ final class StorageManager implements DestructableInterface {
    *   The event: an LwsResourceEvent constant.
    * @param list<\Drupal\lws_storage\Entity\LwsResourceInterface> $resources
    *   The resources, all of one storage.
+   * @param \Drupal\lws\Access\ResourceContext|null $previous
+   *   For a move, of one resource, what was known of it before it moved.
    */
-  private function announce(string $name, array $resources): void {
+  private function announce(string $name, array $resources, ?ResourceContext $previous = NULL): void {
     if ($resources === [] || ($this->events instanceof SymfonyEventDispatcherInterface && !$this->events->hasListeners($name))) {
       return;
     }
@@ -687,7 +973,7 @@ final class StorageManager implements DestructableInterface {
     $time = $this->time->getCurrentMicroTime();
     $events = [];
     foreach ($this->links->contextsOf($storage, $resources) as $i => $context) {
-      $events[] = new LwsResourceEvent($context, (int) $resources[$i]->id(), (string) $resources[$i]->uuid(), $time);
+      $events[] = new LwsResourceEvent($context, (int) $resources[$i]->id(), (string) $resources[$i]->uuid(), $time, $previous);
     }
     $this->database->transactionManager()->addPostTransactionCallback(function (bool $committed) use ($name, $events): void {
       if ($committed) {
@@ -839,6 +1125,14 @@ final class StorageManager implements DestructableInterface {
     if ($messages !== []) {
       throw LwsHttpException::unprocessable(implode(' ', $messages));
     }
+  }
+
+  /**
+   * The storage a resource belongs to.
+   */
+  private function storageOf(LwsResourceInterface $resource): LwsStorageInterface {
+    $storage = $this->entityTypeManager->getStorage('lws_storage')->load($resource->getLwsStorageId());
+    return $storage instanceof LwsStorageInterface ? $storage : throw new \LogicException(sprintf('Resource %s has no storage.', $resource->uuid()));
   }
 
   /**

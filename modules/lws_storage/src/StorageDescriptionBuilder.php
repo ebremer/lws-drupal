@@ -4,11 +4,16 @@ declare(strict_types=1);
 
 namespace Drupal\lws_storage;
 
+use Drupal\lws\Access\AccessDecisionInterface;
+use Drupal\lws\Access\Action;
+use Drupal\lws\Access\ResourceChange;
+use Drupal\lws\Agent\RequestingAgent;
 use Drupal\lws\Routing\LwsUrlGenerator;
 use Drupal\lws\Storage\StorageKeysInterface;
 use Drupal\lws\Storage\StorageServiceInterface;
 use Drupal\lws_storage\Entity\LwsStorageInterface;
 use Drupal\lws_storage\Http\JsonPatches;
+use Ebremer\Lws\CapabilityType;
 use Ebremer\Lws\MediaType;
 use Ebremer\Lws\ResourceType;
 use Ebremer\Lws\Vocabulary;
@@ -17,7 +22,9 @@ use Ebremer\Lws\Vocabulary;
  * Builds storage descriptions (LWS Core §6.1).
  *
  * The service set comes from services tagged "lws.storage_service", in order
- * of priority, and so do the keys of those that publish keys.
+ * of priority, and so do the keys of those that publish keys. The
+ * capabilities are patch support, and moving resources between containers
+ * where clients may (ResourceMoves).
  */
 final class StorageDescriptionBuilder {
 
@@ -30,6 +37,9 @@ final class StorageDescriptionBuilder {
 
   public function __construct(
     private readonly LwsUrlGenerator $urls,
+    private readonly ResourceMoves $moves,
+    private readonly ResourceLinks $links,
+    private readonly AccessDecisionInterface $decisions,
   ) {}
 
   /**
@@ -75,9 +85,54 @@ final class StorageDescriptionBuilder {
             MediaType::LINKSET_JSON => JsonPatches::ACCEPTED,
           ],
         ],
+        ...$this->moveCapability($storage),
       ],
       'service' => $services,
     ];
+  }
+
+  /**
+   * The MoveResource capability, where clients may move resources.
+   *
+   * Every URI here is derived from the containment hierarchy, so a moved
+   * resource's URI changes: "preservesIdentifier" is false. A storage that
+   * takes the writes of a move from nobody allows no move, and so describes
+   * none (LWS Core, Moving Resources).
+   *
+   * @return list<array<string, mixed>>
+   *   The capability, or none.
+   */
+  private function moveCapability(LwsStorageInterface $storage): array {
+    $kinds = $this->moves->appliesTo();
+    if ($kinds === [] || !$this->takesWrites($storage)) {
+      return [];
+    }
+    return [
+      [
+        'type' => CapabilityType::MOVE_RESOURCE,
+        'appliesTo' => $kinds,
+        'preservesIdentifier' => FALSE,
+      ],
+    ];
+  }
+
+  /**
+   * Whether a storage takes the writes a move makes, from anyone at all.
+   *
+   * Not where the policy decision point refuses them even to an agent that
+   * controls every storage, as it does for a projection, which refuses every
+   * write (lws_projection).
+   */
+  private function takesWrites(LwsStorageInterface $storage): bool {
+    $root = $this->links->context($storage, ['root'], TRUE);
+    $controller = new RequestingAgent($root->storage->uri, controlsEveryStorage: TRUE);
+    foreach ([Action::Modify, Action::Delete, Action::Create] as $action) {
+      $context = $action === Action::Modify ? $root->withChange(new ResourceChange(typesUnknown: TRUE)) : $root;
+      if (!$this->decisions->decide($controller, $action, $context)->isPermitted()) {
+        return FALSE;
+      }
+    }
+    return TRUE;
   }
 
 }

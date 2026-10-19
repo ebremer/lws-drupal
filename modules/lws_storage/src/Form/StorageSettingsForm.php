@@ -12,10 +12,11 @@ use Drupal\Core\Form\FormStateInterface;
 use Drupal\Core\StreamWrapper\StreamWrapperInterface;
 use Drupal\Core\StreamWrapper\StreamWrapperManagerInterface;
 use Drupal\lws_storage\Listing\ContainerPager;
+use Drupal\lws_storage\ResourceMoves;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 
 /**
- * Settings of every storage: where content goes, and the limits.
+ * Settings of every storage: where content goes, the limits, and moves.
  */
 final class StorageSettingsForm extends ConfigFormBase {
 
@@ -95,7 +96,7 @@ final class StorageSettingsForm extends ConfigFormBase {
     $form['max_recursive_delete'] = [
       '#type' => 'number',
       '#title' => $this->t('Largest recursive delete'),
-      '#description' => $this->t('The most resources one delete of a container with "Depth: infinity" may remove; more answers 422. 0 for no limit, which lets one request take as long as the container is large.'),
+      '#description' => $this->t('The most resources one delete of a container with "Depth: infinity" may remove, and the move of a container take along; more answers 422. 0 for no limit, which lets one request take as long as the container is large.'),
       '#min' => 0,
       '#config_target' => 'lws_storage.settings:max_recursive_delete',
       '#required' => TRUE,
@@ -114,6 +115,21 @@ final class StorageSettingsForm extends ConfigFormBase {
       '#title' => $this->t('Require If-Match'),
       '#description' => $this->t('Replacing, patching and deleting need If-Match, so that clients cannot overwrite changes they have not seen; without it they answer 428 Precondition Required. Storages can choose otherwise.'),
       '#config_target' => 'lws_storage.settings:require_if_match',
+    ];
+    $form['move_applies_to'] = [
+      '#type' => 'checkboxes',
+      '#title' => $this->t('Moving resources'),
+      '#description' => $this->t('What clients may move to another container of its storage, by changing the "up" link in its linkset (MoveResource). A moved resource takes a new URI, and its former URIs redirect there for those who may read it. Access policies, grants and subscriptions name URIs, so they do not follow it: who may read it is decided where it is now. With neither, changes to "up" answer 409 Conflict.'),
+      '#options' => [
+        'DataResource' => $this->t('Data resources'),
+        'Container' => $this->t('Containers, with everything in them'),
+      ],
+      '#config_target' => new ConfigTarget(
+        'lws_storage.settings',
+        'move_applies_to',
+        fromConfig: static fn (?array $kinds): array => $kinds ?? [],
+        toConfig: static fn (?array $checked): array => array_values(array_intersect(ResourceMoves::KINDS, array_filter($checked ?? [], 'is_string'))),
+      ),
     ];
     return parent::buildForm($form, $form_state);
   }

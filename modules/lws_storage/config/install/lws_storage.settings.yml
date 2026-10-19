@@ -3,3 +3,6 @@ max_upload_bytes: 0
 max_recursive_delete: 1000
 require_if_match: false
 page_size: 100
+move_applies_to:
+  - DataResource
+  - Container

@@ -8,6 +8,7 @@ use Drupal\Core\Entity\EntityStorageException;
 use Drupal\lws\Routing\ResourceName;
 use Drupal\lws_storage\Entity\LwsResource;
 use Drupal\lws_storage\Entity\LwsResourceInterface;
+use Drupal\lws_storage\Linkset\LinksetUpdate;
 use Drupal\lws_storage\LwsResourceEvent;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
@@ -208,13 +209,18 @@ final class StorageManagerTest extends LwsStorageKernelTestBase {
       LwsResourceEvent::DELETED,
     ];
     $storageUri = self::BASE . '/lws/alice/';
-    foreach ($names as $name) {
+    foreach ([...$names, LwsResourceEvent::MOVED] as $name) {
       $dispatcher->addListener($name, function (LwsResourceEvent $event, string $name) use ($events, $storageUri): void {
-        $events[] = [
+        $recorded = [
           substr($name, strlen('lws_storage.resource.')),
           substr($event->resource->uri, strlen($storageUri)),
           substr((string) $event->parentUri(), strlen($storageUri)),
         ];
+        if ($event->previous !== NULL) {
+          $recorded[] = substr($event->previous->uri, strlen($storageUri));
+          $recorded[] = substr((string) $event->previousParentUri(), strlen($storageUri));
+        }
+        $events[] = $recorded;
       });
     }
     $body = static function (string $content) {
@@ -252,14 +258,26 @@ final class StorageManagerTest extends LwsStorageKernelTestBase {
     $this->storages->destruct();
     $this->assertSame([], self::take($events));
 
+    // A move announces the resource it moved, and nothing in it.
+    $this->storages->createContainer($this->resources->root($storage), 'archive');
+    self::take($events);
+    $moved = FALSE;
+    $this->storages->changeLinkset($notes, static fn (LwsResourceInterface $current) => new LinksetUpdate($current->getUserMetadata(), $storageUri . 'root/archive/'), NULL, NULL, $moved);
+    $this->assertTrue($moved);
+    $this->assertSame([['moved', 'root/archive/notes/', 'root/archive/', 'root/notes/', 'root/']], self::take($events));
+    $this->assertSame('root/archive/notes/b.txt', $this->resources->findByPath($storage, 'root/archive/notes/b.txt')?->getPath());
+    $this->assertSame(['archive/'], array_map(static fn (LwsResourceInterface $member): string => $member->getName(), $this->resources->children($this->resources->root($storage))));
+
     // A recursive delete announces each resource it removed, members first.
+    $notes = $this->resources->findByPath($storage, 'root/archive/notes/');
+    $this->assertNotNull($notes);
     $this->storages->deleteResource($notes, TRUE);
     $deleted = self::take($events);
-    $this->assertSame(['deleted', 'root/notes/', 'root/'], array_pop($deleted));
+    $this->assertSame(['deleted', 'root/archive/notes/', 'root/archive/'], array_pop($deleted));
     sort($deleted);
     $this->assertSame([
-      ['deleted', 'root/notes/a.txt', 'root/notes/'],
-      ['deleted', 'root/notes/b.txt', 'root/notes/'],
+      ['deleted', 'root/archive/notes/a.txt', 'root/archive/notes/'],
+      ['deleted', 'root/archive/notes/b.txt', 'root/archive/notes/'],
     ], $deleted);
   }
 

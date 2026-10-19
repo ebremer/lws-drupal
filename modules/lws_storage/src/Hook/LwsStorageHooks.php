@@ -11,6 +11,7 @@ use Drupal\Core\Hook\Attribute\Hook;
 use Drupal\Core\Session\AccountInterface;
 use Drupal\file\FileInterface;
 use Drupal\lws_storage\Content\ContentStore;
+use Drupal\lws_storage\ResourceMoves;
 use Symfony\Component\HttpFoundation\HeaderUtils;
 
 /**
@@ -23,7 +24,29 @@ final class LwsStorageHooks {
     private readonly AccountInterface $currentUser,
     private readonly EntityTypeManagerInterface $entityTypeManager,
     private readonly Connection $database,
+    private readonly ResourceMoves $moves,
   ) {}
+
+  /**
+   * Implements hook_ENTITY_TYPE_delete() for lws_resource.
+   *
+   * A deleted resource's former URIs no longer redirect: they answer as any
+   * URI where nothing exists does.
+   */
+  #[Hook('lws_resource_delete')]
+  public function resourceDelete(EntityInterface $resource): void {
+    $this->moves->forget((int) $resource->id());
+  }
+
+  /**
+   * Implements hook_ENTITY_TYPE_delete() for lws_storage.
+   *
+   * Its resources were deleted with it; anything recorded of them goes too.
+   */
+  #[Hook('lws_storage_delete')]
+  public function storageDelete(EntityInterface $storage): void {
+    $this->moves->forgetStorage((int) $storage->id());
+  }
 
   /**
    * Implements hook_ENTITY_TYPE_predelete() for user.

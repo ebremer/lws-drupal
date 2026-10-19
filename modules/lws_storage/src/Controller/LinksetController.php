@@ -6,6 +6,10 @@ namespace Drupal\lws_storage\Controller;
 
 use Drupal\Core\DependencyInjection\AutowireTrait;
 use Drupal\Core\DependencyInjection\ContainerInjectionInterface;
+use Drupal\lws\Access\AccessDecisionInterface;
+use Drupal\lws\Access\Action;
+use Drupal\lws\Access\ResourceContext;
+use Drupal\lws\Agent\Authentication;
 use Drupal\lws\Http\LwsHttpException;
 use Drupal\lws\Http\LwsResponse;
 use Drupal\lws\Http\MediaTypeNegotiator;
@@ -16,7 +20,9 @@ use Drupal\lws\Http\RequestBody;
 use Drupal\lws_storage\Entity\LwsResourceInterface;
 use Drupal\lws_storage\Entity\LwsStorageInterface;
 use Drupal\lws_storage\Http\JsonPatches;
+use Drupal\lws_storage\Linkset\LinksetUpdate;
 use Drupal\lws_storage\Linkset\Linksets;
+use Drupal\lws_storage\ResourceLinks;
 use Drupal\lws_storage\ResourceRepository;
 use Drupal\lws_storage\StorageManager;
 use Ebremer\Lws\Http\LinkHeader;
@@ -33,7 +39,11 @@ use Symfony\Component\HttpFoundation\Response;
  * A linkset holds the server-managed relations of its resource (up, and the
  * LWS class among the types) and the relations clients manage. PUT replaces
  * the latter with a linkset document; PATCH applies a JSON Patch to the
- * document a GET returns. Neither may change a server-managed relation.
+ * document a GET returns. Neither may change a server-managed relation, but
+ * for "up": another container there moves the resource (LWS Core, Moving
+ * Resources), which StorageManager::changeLinkset() decides on. A move
+ * answers 200 with the linkset, whose anchor is the resource's new URI; any
+ * other write, 204.
  */
 final class LinksetController implements ContainerInjectionInterface {
 
@@ -49,6 +59,8 @@ final class LinksetController implements ContainerInjectionInterface {
     private readonly Linksets $linksets,
     private readonly StorageManager $manager,
     private readonly LwsUrlGenerator $urls,
+    private readonly AccessDecisionInterface $decisions,
+    private readonly ResourceLinks $resourceLinks,
   ) {}
 
   /**
@@ -77,7 +89,7 @@ final class LinksetController implements ContainerInjectionInterface {
    * Replaces the links clients manage with a linkset document.
    *
    * The document may leave out the server-managed relations; if it has them,
-   * they must be as they are.
+   * they must be as they are, but for "up", which may move the resource.
    */
   public function put(LwsStorageInterface $lws_storage, LwsTarget $lws_target, Request $request): Response {
     $resource = $this->resource($lws_storage, $lws_target);
@@ -92,26 +104,31 @@ final class LinksetController implements ContainerInjectionInterface {
     catch (\JsonException) {
       throw LwsHttpException::badRequest('The linkset document is not JSON.');
     }
-    $updated = $this->manager->changeMetadata(
+    $moved = FALSE;
+    $updated = $this->manager->changeLinkset(
       $resource,
-      fn (LwsResourceInterface $current) => $this->linksets->fromDocument($document, $lws_storage, $current, FALSE),
+      fn (LwsResourceInterface $current): LinksetUpdate => $this->linksets->fromDocument($document, $lws_storage, $current, FALSE),
       fn (LwsResourceInterface $current) => $this->checkPreconditions($request, $lws_storage, $current),
+      $this->authorize($request),
+      $moved,
     );
-    return LwsResponse::empty(Response::HTTP_NO_CONTENT, [], Linksets::etag($this->linksets->document($lws_storage, $updated)));
+    return $this->updated($lws_storage, $lws_target, $updated, $moved);
   }
 
   /**
    * Applies a JSON Patch to the document a GET returns (§9.1).
    *
    * The result must still be a linkset of the resource (422), with its
-   * server-managed relations as they are (409).
+   * server-managed relations as they are (409), but for "up", which may
+   * move the resource: a client replaces /linkset/0/up/0/href.
    */
   public function patch(LwsStorageInterface $lws_storage, LwsTarget $lws_target, Request $request): Response {
     $resource = $this->resource($lws_storage, $lws_target);
     $patch = JsonPatches::fromRequest($request);
-    $updated = $this->manager->changeMetadata(
+    $moved = FALSE;
+    $updated = $this->manager->changeLinkset(
       $resource,
-      function (LwsResourceInterface $current) use ($patch, $lws_storage) {
+      function (LwsResourceInterface $current) use ($patch, $lws_storage): LinksetUpdate {
         // As the client saw it: decoded the way a client decodes it.
         $document = Json::decode(Json::encode($this->linksets->document($lws_storage, $current)));
         try {
@@ -123,8 +140,40 @@ final class LinksetController implements ContainerInjectionInterface {
         return $this->linksets->fromDocument($patched, $lws_storage, $current, TRUE);
       },
       fn (LwsResourceInterface $current) => $this->checkPreconditions($request, $lws_storage, $current),
+      $this->authorize($request),
+      $moved,
     );
-    return LwsResponse::empty(Response::HTTP_NO_CONTENT, [], Linksets::etag($this->linksets->document($lws_storage, $updated)));
+    return $this->updated($lws_storage, $lws_target, $updated, $moved);
+  }
+
+  /**
+   * The answer to a write of a linkset.
+   *
+   * A move answers 200 with the linkset, whose anchor is the resource's new
+   * URI, and with the linkset's URL, which a move does not change, as
+   * Content-Location: a storage that does not preserve identifiers must
+   * (LWS Core, Moving Resources). Any other write answers 204.
+   */
+  private function updated(LwsStorageInterface $storage, LwsTarget $target, LwsResourceInterface $resource, bool $moved): Response {
+    $document = $this->linksets->document($storage, $resource);
+    $etag = Linksets::etag($document);
+    if (!$moved) {
+      return LwsResponse::empty(Response::HTTP_NO_CONTENT, [], $etag);
+    }
+    $headers = $this->headers($target) + ['Content-Location' => $this->resourceLinks->linksetUri($storage, $resource)];
+    return LwsResponse::json($document, MediaType::LINKSET_JSON, $this->links($storage), $etag, $headers)
+      ->setLastModified(new \DateTimeImmutable('@' . $resource->getMetadataChangedTime()));
+  }
+
+  /**
+   * Decides, for a move, what the requesting agent may do.
+   *
+   * @return \Closure(\Drupal\lws\Access\Action, \Drupal\lws\Access\ResourceContext): bool
+   *   Whether it may perform an action on a resource.
+   */
+  private function authorize(Request $request): \Closure {
+    $agent = Authentication::fromRequest($request)->agent;
+    return fn (Action $action, ResourceContext $context): bool => $this->decisions->decide($agent, $action, $context)->isPermitted();
   }
 
   /**

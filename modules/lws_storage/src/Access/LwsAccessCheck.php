@@ -12,12 +12,14 @@ use Drupal\lws\Access\Action;
 use Drupal\lws\Access\ResourceChange;
 use Drupal\lws\Access\ResourceContext;
 use Drupal\lws\Agent\Authentication;
+use Drupal\lws\Agent\RequestingAgent;
 use Drupal\lws\Routing\LwsArea;
 use Drupal\lws\Routing\LwsTarget;
 use Drupal\lws_storage\Entity\LwsStorageInterface;
 use Drupal\lws_storage\Http\WriteRequests;
 use Drupal\lws_storage\Linkset\Linksets;
 use Drupal\lws_storage\ResourceLinks;
+use Drupal\lws_storage\ResourceMoves;
 use Drupal\lws_storage\ResourceRepository;
 use Ebremer\Lws\ResourceType;
 use Symfony\Component\HttpFoundation\Request;
@@ -41,8 +43,21 @@ use Symfony\Component\Routing\Route;
  * does not exist is refused as one of another format or type would be. A
  * write is also judged on what it would make of the resource: the format and
  * types of the resource a POST creates, and the new ones a PUT or PATCH sets.
+ *
+ * A GET or HEAD of a former URI of a moved resource, where nothing exists
+ * now, is judged as a read of the resource where it is: who may read it
+ * there is answered 301 Moved Permanently (Privacy Considerations, "Moving
+ * Resources Between Containers"), and only that (MOVED_ONLY).
  */
 final class LwsAccessCheck implements AccessInterface {
+
+  /**
+   * The request attribute that allows only a redirect to a moved resource.
+   *
+   * The controller then serves nothing else, not even a resource created at
+   * the URI meanwhile.
+   */
+  public const MOVED_ONLY = '_lws_moved_only';
 
   /**
    * A media type, as a Content-Type header starts with it.
@@ -54,6 +69,7 @@ final class LwsAccessCheck implements AccessInterface {
     private readonly ResourceLinks $links,
     private readonly ResourceRepository $resources,
     private readonly Linksets $linksets,
+    private readonly ResourceMoves $moves,
   ) {}
 
   /**
@@ -78,7 +94,27 @@ final class LwsAccessCheck implements AccessInterface {
     if ($requirement !== 'resource' || $context === NULL) {
       return self::result(FALSE, 'The route has no LWS access requirement this check understands.');
     }
-    return self::result($this->decisions->decide($authentication->agent, $action, $context)->isPermitted());
+    if ($this->decisions->decide($authentication->agent, $action, $context)->isPermitted()) {
+      return self::result(TRUE);
+    }
+    if ($this->readsMoved($storage, $target, $authentication->agent, $request)) {
+      $request->attributes->set(self::MOVED_ONLY, TRUE);
+      return self::result(TRUE);
+    }
+    return self::result(FALSE);
+  }
+
+  /**
+   * Whether a request reads a former URI of a resource the agent may read.
+   *
+   * Only for GET and HEAD of a URI where nothing exists.
+   */
+  private function readsMoved(LwsStorageInterface $storage, LwsTarget $target, RequestingAgent $agent, Request $request): bool {
+    if (!$request->isMethod('GET') && !$request->isMethod('HEAD')) {
+      return FALSE;
+    }
+    $moved = $this->resources->findByTarget($storage, $target) === NULL ? $this->moves->findByTarget($storage, $target) : NULL;
+    return $moved !== NULL && $this->decisions->decide($agent, Action::Read, $this->links->contextOf($storage, $moved))->isPermitted();
   }
 
   /**

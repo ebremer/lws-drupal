@@ -6,7 +6,9 @@ namespace Drupal\lws_storage;
 
 use Drupal\Core\Database\Connection;
 use Drupal\lws\Access\ResourceContext;
+use Drupal\lws\Routing\LwsTarget;
 use Drupal\lws\Routing\LwsUrlGenerator;
+use Drupal\lws\Routing\LwsUrlParser;
 use Drupal\lws_storage\Entity\LwsResourceInterface;
 use Drupal\lws_storage\Entity\LwsStorageInterface;
 use Drupal\lws_storage\Linkset\Linksets;
@@ -24,13 +26,36 @@ final class ResourceLinks {
     private readonly LwsUrlGenerator $urls,
     private readonly StorageRegistry $storages,
     private readonly Connection $database,
+    private readonly LwsUrlParser $parser,
   ) {}
+
+  /**
+   * The URI of a storage.
+   */
+  public function storageUri(LwsStorageInterface $storage): string {
+    return $this->urls->storageUri($storage->getSlug());
+  }
 
   /**
    * The URI of a resource.
    */
   public function uri(LwsStorageInterface $storage, LwsResourceInterface $resource): string {
     return $this->urls->resourceUri($storage->getSlug(), $resource->getSegments(), $resource->isContainer());
+  }
+
+  /**
+   * What an absolute URI addresses in this site's LWS URL space, if anything.
+   *
+   * As a request for it would be addressed, whether anything exists there or
+   * not: its storage, and for a resource its decoded names, so that two
+   * spellings of one URI, such as "%7E" and "~", address the same.
+   */
+  public function targetOf(string $uri): ?LwsTarget {
+    $base = $this->urls->baseUrl();
+    if ($base === '' || !str_starts_with($uri, $base . '/')) {
+      return NULL;
+    }
+    return $this->parser->parse(substr($uri, strlen($base)));
   }
 
   /**

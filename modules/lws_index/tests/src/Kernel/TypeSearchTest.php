@@ -180,6 +180,35 @@ final class TypeSearchTest extends IndexKernelTestBase {
   }
 
   /**
+   * Tests that a moved resource is found where it is now, and only there.
+   */
+  public function testFollowsMoves(): void {
+    $this->createContainer('root/', 'a');
+    $this->createContainer('root/', 'b');
+    $this->createContainer('root/a/', 'inner');
+    $one = $this->create('root/a/', 'one', ['Alpha']);
+    $two = $this->create('root/a/inner/', 'two', ['Alpha']);
+    $this->letRead(self::BOB, ['root/a/']);
+    $this->assertSame([$one, $two], $this->find(self::BOB, ['type' => [self::T . 'Alpha']]));
+
+    $move = function (string $path, string $destination): void {
+      $linkset = $this->link($this->as(self::ALICE, 'HEAD', '/lws/alice/' . $path), 'linkset');
+      $this->assertNotNull($linkset);
+      $response = $this->as(self::ALICE, 'PATCH', substr($linkset, strlen(self::BASE)), ['Content-Type' => 'application/json-patch+json'], json_encode([
+        ['op' => 'replace', 'path' => '/linkset/0/up/0/href', 'value' => self::STORAGE . $destination],
+      ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES));
+      $this->assertSame(200, $response->getStatusCode(), (string) $response->getContent());
+    };
+    $move($one, 'root/b/');
+    $move('root/a/inner/', 'root/b/');
+    $this->assertSame(['root/b/one', 'root/b/inner/two'], $this->find(self::ALICE, ['type' => [self::T . 'Alpha']]));
+    // Bob may read a/, where they were, not b/, where they are.
+    $this->assertSame([], $this->find(self::BOB, ['type' => [self::T . 'Alpha']]));
+    $this->letRead(self::BOB, ['root/b/inner/']);
+    $this->assertSame(['root/b/inner/two'], $this->find(self::BOB, ['type' => [self::T . 'Alpha']]));
+  }
+
+  /**
    * Tests requests that are not searches.
    */
   public function testErrors(): void {

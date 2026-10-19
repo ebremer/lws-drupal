@@ -9,6 +9,51 @@ declare(strict_types=1);
 
 use Drupal\Core\Field\BaseFieldDefinition;
 use Drupal\Core\StringTranslation\TranslatableMarkup;
+use Drupal\lws_storage\Entity\LwsResourceInterface;
+use Drupal\lws_storage\ResourceMoves;
+
+/**
+ * Implements hook_schema().
+ *
+ * @phpstan-return array<string, array<string, mixed>>
+ */
+function lws_storage_schema(): array {
+  $schema[ResourceMoves::TABLE] = [
+    'description' => 'Where moved LWS resources were: their former paths, whose URIs redirect to them.',
+    'fields' => [
+      'storage_id' => [
+        'description' => 'The ID of the lws_storage.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ],
+      'path_hash' => [
+        'description' => 'The SHA-256 of the former path, in hex: what lookups use.',
+        'type' => 'varchar_ascii',
+        'length' => 64,
+        'not null' => TRUE,
+      ],
+      'path' => [
+        'description' => 'The former path below the storage URI, such as "root/notes/a.txt".',
+        'type' => 'varchar',
+        'length' => LwsResourceInterface::MAX_PATH_LENGTH,
+        'not null' => TRUE,
+        'binary' => TRUE,
+      ],
+      'resource_id' => [
+        'description' => 'The ID of the lws_resource that moved from there.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ],
+    ],
+    'primary key' => ['storage_id', 'path_hash'],
+    'indexes' => [
+      'resource' => ['resource_id'],
+    ],
+  ];
+  return $schema;
+}
 
 /**
  * Lets each storage require If-Match, or not (step S5).
@@ -23,4 +68,23 @@ function lws_storage_update_11001(): string {
     ->setDescription(new TranslatableMarkup('Whether changes must be conditional on If-Match. Empty for the site default.'));
   $updates->installFieldStorageDefinition('require_if_match', 'lws_storage', 'lws_storage', $field);
   return 'Storages can now require If-Match, or not, whatever the site default.';
+}
+
+/**
+ * Lets clients move resources between containers (LWS Core, Moving Resources).
+ *
+ * Data resources and containers alike, as on a new site; the storage
+ * settings can narrow it, or turn it off.
+ */
+function lws_storage_update_11002(): string {
+  $schema = \Drupal::database()->schema();
+  if (!$schema->tableExists(ResourceMoves::TABLE)) {
+    $schema->createTable(ResourceMoves::TABLE, lws_storage_schema()[ResourceMoves::TABLE]);
+  }
+  $settings = \Drupal::configFactory()->getEditable('lws_storage.settings');
+  if ($settings->get('move_applies_to') !== NULL) {
+    return 'Clients could already move resources.';
+  }
+  $settings->set('move_applies_to', ResourceMoves::KINDS)->save();
+  return 'Clients may now move data resources and containers by changing their "up" link; the storage settings can narrow it, or turn it off.';
 }

@@ -30,6 +30,7 @@ use Symfony\Component\HttpKernel\KernelEvents;
  * A change to a resource goes to each live subscription that covers it,
  * and that the subscriber, its agent through its client, may read as the
  * change is made (LWS Core §10.3.3). A deleted resource is judged as it was.
+ * A moved one, by where it is now and where it was (onMove()).
  *
  * A new or deleted access request or grant goes to the inbox it names, and a
  * grant made by approving a request to the request's inbox too (§11.6).
@@ -70,6 +71,7 @@ final class Notifier implements EventSubscriberInterface, DestructableInterface 
       LwsResourceEvent::UPDATED => 'onResource',
       LwsResourceEvent::METADATA_UPDATED => 'onResource',
       LwsResourceEvent::DELETED => 'onResource',
+      LwsResourceEvent::MOVED => 'onMove',
       AccessRecordEvent::CREATED => 'onAccessRecord',
       AccessRecordEvent::DELETED => 'onAccessRecord',
       KernelEvents::TERMINATE => 'flush',
@@ -96,6 +98,50 @@ final class Notifier implements EventSubscriberInterface, DestructableInterface 
       // The change is made; a notification that cannot be is no reason to
       // fail the request.
       $this->logger->error('No notifications of a change to @uri: @message', [
+        '@uri' => $event->resource->uri,
+        '@message' => $e->getMessage(),
+      ]);
+    }
+  }
+
+  /**
+   * Notifies the subscriptions that covered a moved resource, or now cover it.
+   *
+   * Each at most once. A subscriber who may read the resource where it is
+   * now gets one Move activity (Moving Resources, "Notifications"). One who
+   * could read it where it was, but may not where it is, gets a Delete of
+   * its former URI: it left their view, and they learn nothing of where it
+   * went. Anyone else gets nothing.
+   */
+  public function onMove(LwsResourceEvent $event): void {
+    try {
+      $previous = $event->previous;
+      if ($previous === NULL) {
+        return;
+      }
+      $resource = $event->resource;
+      $move = NULL;
+      $delete = NULL;
+      $subscriptions = [];
+      foreach ([...$this->subscriptions->covering($resource), ...$this->subscriptions->covering($previous)] as $subscription) {
+        $subscriptions[(int) $subscription->id()] = $subscription;
+      }
+      foreach ($subscriptions as $id => $subscription) {
+        $agent = $this->subscriptions->agentOf($subscription);
+        if ($this->decisions->decide($agent, Action::Read, $resource)->isPermitted()) {
+          $move ??= Activities::forResource(LwsResourceEvent::MOVED, $event, $this->uuid->generate(), $this->actor());
+          $this->add('subscription:' . $id, $subscription->getInbox(), $resource->storage->uri, $id, $move, $resource);
+        }
+        elseif (Subscriptions::covers($subscription, $previous) && $this->decisions->decide($agent, Action::Read, $previous)->isPermitted()) {
+          $delete ??= Activities::forResource(LwsResourceEvent::DELETED, new LwsResourceEvent($previous, $event->id, $event->uuid, $event->time), $this->uuid->generate(), $this->actor());
+          $this->add('subscription:' . $id, $subscription->getInbox(), $previous->storage->uri, $id, $delete, $previous);
+        }
+      }
+    }
+    catch (\Throwable $e) {
+      // The move is made; a notification that cannot be is no reason to fail
+      // the request.
+      $this->logger->error('No notifications of a move to @uri: @message', [
         '@uri' => $event->resource->uri,
         '@message' => $e->getMessage(),
       ]);

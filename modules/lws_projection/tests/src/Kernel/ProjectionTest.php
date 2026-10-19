@@ -80,6 +80,16 @@ final class ProjectionTest extends ProjectionKernelTestBase {
     $this->assertSame(403, $this->send('PATCH', $path, $token + ['Content-Type' => 'application/json-patch+json'], '[]')->getStatusCode());
     $this->assertSame(403, $this->send('DELETE', $path, $token)->getStatusCode());
     $this->assertSame(403, $this->send('POST', self::STORAGE . 'root/', $token + ['Content-Type' => 'text/plain'], 'x')->getStatusCode());
+
+    // Nothing in it moves, so it says nothing of moving.
+    $description = $this->json($this->send('GET', self::STORAGE));
+    $this->assertNotContains('MoveResource', array_column($description['capability'], 'type'));
+    $linkset = $this->container->get('lws_storage.resource_links')->linksetUri($this->loadStorage('content'), $this->resources->findByPath($this->loadStorage('content'), 'root/node/article/' . $hello->id()) ?? throw new \RuntimeException('Not projected.'));
+    $move = json_encode([
+      ['op' => 'replace', 'path' => '/linkset/0/up/0/href', 'value' => self::BASE . self::STORAGE . 'root/node/'],
+    ], JSON_THROW_ON_ERROR);
+    $this->assertSame(403, $this->send('PATCH', substr($linkset, strlen(self::BASE)), $token + ['Content-Type' => 'application/json-patch+json'], $move)->getStatusCode());
+    $this->assertSame(200, $this->send('GET', $path, $token)->getStatusCode());
   }
 
   /**

@@ -37,7 +37,8 @@ allow:
 | `PUT` a data resource | `204`: its content replaced. There is no create-by-`PUT` |
 | `PATCH` a JSON data resource | `204`: a JSON Patch (`application/json-patch+json`) applied, all or nothing (`409` if a `test` fails) |
 | `DELETE` | `204`. A container that is not empty needs `Depth: infinity` (`409` otherwise) |
-| `GET`, `PUT`, `PATCH /lws/{storage}/meta/{uuid}` | The linkset of a resource (`application/linkset+json`): its parent and types, and the links clients manage. Server-managed links cannot change (`409`) |
+| `GET`, `PUT`, `PATCH /lws/{storage}/meta/{uuid}` | The linkset of a resource (`application/linkset+json`): its parent and types, and the links clients manage. Server-managed links cannot change (`409`), but for `up`: another container there moves the resource, and the answer is `200` with the linkset ([Moving resources](#moving-resources)) |
+| `GET`/`HEAD` a former URI of a moved resource | `301` with `Location`, to an agent who may read the resource where it is now; anyone else gets what they would if nothing had moved |
 | `Link` headers on `POST`; with `Prefer: set-linkset`, on `PUT` and `PATCH` | Set the links clients manage, such as types (`rel="type"`) and licenses |
 | `If-Match`, `If-None-Match`, `If-(Un)Modified-Since` | `304` or `412` as RFC 9110 says |
 | `POST /lws/{storage}/access/requests/` | An access request (`AccessRequest`, `application/lws+json`) for the agent itself |
@@ -97,7 +98,7 @@ drush lws:gc                                           # sweep unreferenced cont
 | `/admin/content/lws/{id}/delete` | Deletes it with everything in it; a large storage is blocked first and emptied in a batch |
 | `/user/{uid}/lws-identity` | With `lws_identity`: the user's agent URI and keys; *Add a key*, *Remove*. For the user, with *Manage own LWS agent keys*, and for administrators of agents |
 | `/user/{uid}/edit` | With `lws_agent_users`: *LWS agent URI*, the agent that acts as the user, and whether the account was made for one. For administrators of users |
-| *Configuration › Web services › Linked Web Storage* | The base URL, path prefix and concealment; on the *Storages* tab, where content goes, the largest content, the largest recursive delete, the page size and whether changes need `If-Match`; on the *Notifications* tab, whether activities name their actor, the limits on subscriptions, and how deliveries are made and retried; on the *Type index* tab, the relations searches may filter on; on the *Agent identities* tab, the OpenID Providers agents' documents name and whether each new agent gets a storage; on the *Agent users* tab, whether agents without an account get one, within which limits, and when unseen ones go; on the *Projections* tab, the projections of Drupal content, each with its storage, the content it holds, the type of each bundle's resources, and whether anyone may read it |
+| *Configuration › Web services › Linked Web Storage* | The base URL, path prefix and concealment; on the *Storages* tab, where content goes, the largest content, the largest recursive delete, the page size, whether changes need `If-Match` and what clients may move; on the *Notifications* tab, whether activities name their actor, the limits on subscriptions, and how deliveries are made and retried; on the *Type index* tab, the relations searches may filter on; on the *Agent identities* tab, the OpenID Providers agents' documents name and whether each new agent gets a storage; on the *Agent users* tab, whether agents without an account get one, within which limits, and when unseen ones go; on the *Projections* tab, the projections of Drupal content, each with its storage, the content it holds, the type of each bundle's resources, and whether anyone may read it |
 
 *Create media item* (with Media) copies a data resource's content into a new,
 unpublished Media item of a type made from a file. The copy is the site's: later
@@ -127,6 +128,11 @@ Core §11.3):
 Listings show each agent only the members it may read. Removing a policy takes
 effect on the next request.
 
+Policies, grants and subscriptions name resources by URI, so a resource that
+moves leaves those of its former URI behind: who may read it, and who hears of
+its changes, is then decided where it is now, and a container's policies cover
+what is moved into it ([Moving resources](#moving-resources)).
+
 Over LWS, agents ask for access at the storage's `AccessRequestService`, and its
 controllers grant it at its `AccessGrantService` (LWS Core §11): a grant's
 policies are stored with it, and go when it is revoked. Requests wait on the
@@ -143,6 +149,59 @@ drush lws:policy:add alice --json=policy.json          # an AccessPolicy object
 drush lws:policy:list alice
 drush lws:policy:delete alice 3
 ```
+
+## Moving resources
+
+A client moves a resource to another container of its storage by changing the
+`up` link in its linkset (LWS Core, Moving Resources), as the storage
+description's `MoveResource` capability says it may, with a JSON Patch of the
+document a `GET` of the linkset returns:
+
+```http
+PATCH /lws/alice/meta/0b6f… HTTP/1.1
+Content-Type: application/json-patch+json
+If-Match: "…"
+
+[{"op": "replace", "path": "/linkset/0/up/0/href", "value": "https://storage.example/lws/alice/root/archive/"}]
+```
+
+- **A new URI.** URIs here follow the containment hierarchy, so a moved
+  resource takes its new container's URI and its name, and the capability
+  says `"preservesIdentifier": false`. Its name stays, unless the destination
+  holds it already; then it takes one as for a taken `Slug` (`a.txt` →
+  `a-1.txt`). The answer is `200` with the linkset, whose `anchor` is the new
+  URI, and `Content-Location`: the linkset's URL, which does not change. A
+  container moves with everything in it, which keeps its place in it.
+- **What stays.** The content and its entity tag, the links clients manage
+  (the same write may change them too), the creator, and the linkset's URL.
+  The entity tags of both containers change, and a moved container's own.
+- **Who may.** An agent who may change the linkset, delete the resource and,
+  for a container, everything in it (as `DELETE` with `Depth: infinity`
+  needs), and create in the destination, judged by its URI as a `POST` there
+  would be: one who may not learns nothing of whether it exists. Otherwise
+  `401` or `403` (`404` with concealment), and nothing moves.
+- **What is refused,** with `409`: another storage, a URI that is not a
+  container's, a container that does not exist, a container into itself or
+  one it holds, an `up` with no target or with two, the root, and a path that
+  would grow longer than 2,048 characters. A container holding more than the
+  largest recursive delete answers `422`. An `up` may be a relative
+  reference, resolved against the linkset's URL. Naming the container it is
+  in already moves nothing (`204`).
+- **Former URIs.** A `GET` or `HEAD` of a URI where nothing exists now, which
+  a moved resource had, or which was below a moved container's, answers `301
+  Moved Permanently` with the resource's URI, query and all, but only to an
+  agent who may read it where it is: anyone else gets what they would if it
+  had never been there. A resource made at a former URI takes it over, and a
+  deleted one leaves no redirect.
+- **Notifications.** A subscriber who may read the resource where it is now
+  hears one `Move`, from `origin` to `target`; one who could read it only
+  where it was hears a `Delete` of its former URI. Nothing is announced of
+  what a moved container holds.
+- **Turning it off.** *Moving resources* on the *Storages* tab of the LWS
+  settings (`lws_storage.settings:move_applies_to`): data resources,
+  containers, both (the default) or neither. Then the capability names only
+  those, or is not described at all, and any other change of `up` answers
+  `409`. Read-only storages, as projections are, describe none.
 
 ## Notifications
 
@@ -164,9 +223,11 @@ and an `inbox`:
   holds at most 20 at a storage (`429`), and the answer is `201` with
   `Location` and the subscription's `expires`.
 - **What is delivered.** Each change to a covered resource becomes an Activity
-  Streams `Create`, `Update` or `Delete`, if the subscriber may read the
-  resource when the change is made: removing someone's access stops their
-  notifications at once. The changes of one request go in one notification
+  Streams `Create`, `Update`, `Delete` or `Move`, if the subscriber may read
+  the resource when the change is made: removing someone's access stops their
+  notifications at once. A move goes to subscriptions that covered the
+  resource where it was or cover it where it is ([Moving
+  resources](#moving-resources)). The changes of one request go in one notification
   per subscription. Who made a change is withheld unless the settings say
   otherwise. A new or deleted access request or grant is announced to the
   inbox it names, and a grant made by approving a request to the request's
