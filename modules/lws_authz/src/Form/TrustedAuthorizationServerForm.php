@@ -51,7 +51,7 @@ final class TrustedAuthorizationServerForm extends EntityForm {
     $form['issuer'] = [
       '#type' => 'url',
       '#title' => $this->t('Issuer'),
-      '#description' => $this->t('The issuer identifier of the server: the "iss" of its access tokens, and the "as_uri" that 401 challenges send clients to.'),
+      '#description' => $this->t('The issuer identifier of the server: the "iss" of its access tokens, and the authorization server that 401 challenges send clients to.'),
       '#default_value' => $server->getIssuer(),
       '#required' => TRUE,
     ];

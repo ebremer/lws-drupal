@@ -14,27 +14,20 @@ final class NegotiatedType {
    *
    * @param string $type
    *   The media type, without parameters.
-   * @param array<string, string> $params
-   *   The parameters of the Accept media range that named the type exactly,
-   *   such as a JSON-LD profile.
+   * @param string|null $profile
+   *   The profile the client asked for the type in, and the server produces
+   *   it in (RFC 6906), such as the LWS profile; NULL for none.
    */
   public function __construct(
     public readonly string $type,
-    public readonly array $params = [],
+    public readonly ?string $profile = NULL,
   ) {}
 
   /**
-   * The Content-Type value, keeping a requested profile parameter.
-   *
-   * @param list<string> $profiles
-   *   The profiles the representation conforms to.
+   * The Content-Type value, naming the profile it was negotiated in.
    */
-  public function contentType(array $profiles = []): string {
-    $profile = $this->params['profile'] ?? NULL;
-    if ($profile !== NULL && in_array($profile, $profiles, TRUE)) {
-      return $this->type . '; profile="' . $profile . '"';
-    }
-    return $this->type;
+  public function contentType(): string {
+    return $this->profile === NULL ? $this->type : $this->type . '; profile="' . $this->profile . '"';
   }
 
 }

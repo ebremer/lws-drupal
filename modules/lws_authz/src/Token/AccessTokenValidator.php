@@ -20,7 +20,11 @@ use Psr\Log\LoggerInterface;
  *   verify (never "none" or HMAC), and no "crit";
  * - its signature verifies with a key of the storage's authorization server;
  * - its "iss" is that server;
- * - its "aud" has exactly one value, the storage URI;
+ * - its "aud", a string or an array of strings (RFC 7519 §4.1.3), includes
+ *   the storage URI, with or without its trailing slash. The drafts before
+ *   19 October 2026 wanted the storage URI alone; other values are now the
+ *   authorization server's choice, though they let each audience replay the
+ *   token to the others (Security Considerations, Audience Binding);
  * - it is not expired, not before its "nbf", and not issued in the future,
  *   within the configured clock skew;
  * - it has the claims §5.2.3.2 requires: "sub" and "client_id" as URIs, and
@@ -95,10 +99,13 @@ final class AccessTokenValidator {
       throw new InvalidTokenException('The token is not from this storage\'s authorization server.');
     }
 
-    $aud = $claims['aud'] ?? NULL;
+    $aud = $claims['aud'] ?? [];
     $audiences = is_array($aud) ? $aud : [$aud];
-    if (count($audiences) !== 1 || !in_array($audiences[0] ?? NULL, [$audience, rtrim($audience, '/')], TRUE)) {
-      throw new InvalidTokenException('The token is not for this storage: its "aud" must be the storage URI alone.');
+    if (!array_is_list($audiences) || array_filter($audiences, 'is_string') !== $audiences) {
+      throw new InvalidTokenException('The token\'s "aud" is not a string or an array of strings.');
+    }
+    if (array_intersect($audiences, [$audience, rtrim($audience, '/')]) === []) {
+      throw new InvalidTokenException('The token is not for this storage: its "aud" must include the storage URI.');
     }
 
     $now = $this->time->getCurrentTime();

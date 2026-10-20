@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Drupal\lws\Routing;
 
 use Drupal\Core\Config\ConfigFactoryInterface;
+use Ebremer\Lws\Vocabulary;
+use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\RequestStack;
 
 /**
@@ -57,10 +59,51 @@ final class LwsUrlGenerator {
   }
 
   /**
-   * The URI of a storage: its id, realm and token audience.
+   * The URI of a storage: its id, and the audience of its tokens.
    */
   public function storageUri(string $storage): string {
     return $this->baseUrl() . $this->parser->prefix() . '/' . $storage . '/';
+  }
+
+  /**
+   * The URL a client requested in the LWS URL space.
+   *
+   * The base URL, then the path as Drupal received it, still percent-encoded,
+   * then the query as sent, if there was one: character for character the
+   * URL the client asked for, which a client compares the "resource" of
+   * protected resource metadata with (RFC 9728 §3.3).
+   */
+  public function requestUri(Request $request): string {
+    return $this->baseUrl() . $request->getPathInfo() . self::rawQuery($request);
+  }
+
+  /**
+   * The query of a request as sent, with its "?"; empty if it had none.
+   *
+   * Taken from the request URI: Request::getQueryString() sorts and
+   * re-encodes the parameters.
+   */
+  public static function rawQuery(Request $request): string {
+    $uri = $request->getRequestUri();
+    $mark = strpos($uri, '?');
+    return $mark === FALSE ? '' : substr($uri, $mark);
+  }
+
+  /**
+   * The URL of the protected resource metadata of a resource (RFC 9728 §3.1).
+   *
+   * The well-known segment goes between the authority and the path, and the
+   * query stays after the path. A path of "/" alone is dropped, as RFC 9728
+   * drops a terminating slash after the host.
+   *
+   * @param string $resource
+   *   The absolute URL of the resource.
+   */
+  public static function resourceMetadataUri(string $resource): string {
+    if (preg_match('#^([A-Za-z][A-Za-z0-9+.-]*://[^/?\#]*)([^?\#]*)([^\#]*)#', $resource, $parts) !== 1) {
+      return '';
+    }
+    return $parts[1] . Vocabulary::WELL_KNOWN_OAUTH_PROTECTED_RESOURCE . ($parts[2] === '/' ? '' : $parts[2]) . $parts[3];
   }
 
   /**

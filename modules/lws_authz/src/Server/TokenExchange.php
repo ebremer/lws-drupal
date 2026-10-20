@@ -32,7 +32,8 @@ use Psr\Log\LoggerInterface;
  * 1. the grant type is token exchange (else unsupported_grant_type);
  * 2. resource, subject_token and subject_token_type are present;
  * 3. the resource is the URI of a storage of this site that trusts this
- *    authorization server (else invalid_target);
+ *    authorization server, which a 401 links to (else invalid_target): not
+ *    the URL of a resource in it, which protected resource metadata names;
  * 4. an enabled authentication suite takes the subject token type, and
  *    validates the credential;
  * 5. an access token is minted: "aud" the resource as given, "sub" and
@@ -127,7 +128,7 @@ final class TokenExchange {
     }
     $resource = $parameters['resource'] ?? '';
     if ($resource === '') {
-      throw OAuthError::invalidRequest('resource is required: the URI of the storage, the realm of its 401 challenge.');
+      throw OAuthError::invalidRequest('resource is required: the URI of the storage, as the Link header of its 401 names it.');
     }
     $subjectToken = $parameters['subject_token'] ?? '';
     $subjectTokenType = $parameters['subject_token_type'] ?? '';

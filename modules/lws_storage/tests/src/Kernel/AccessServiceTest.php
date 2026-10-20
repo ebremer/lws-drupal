@@ -158,7 +158,8 @@ final class AccessServiceTest extends LwsStorageKernelTestBase {
     // Without a token, the storage's challenge.
     $response = $this->as(NULL, 'GET', self::GRANTS);
     $this->assertSame(401, $response->getStatusCode());
-    $this->assertStringContainsString('realm="' . self::STORAGE . '"', (string) $response->headers->get('WWW-Authenticate'));
+    $this->assertStringStartsWith('Bearer resource_metadata="' . self::BASE . '/.well-known/oauth-protected-resource/lws/alice/access/grants/"', (string) $response->headers->get('WWW-Authenticate'));
+    $this->assertContains('<' . self::STORAGE . '>; rel="https://www.w3.org/ns/lws#storage"', $response->headers->all('link'));
     $this->assertSame(405, $this->as(self::ALICE, 'PUT', self::GRANTS, '{}')->getStatusCode());
     $this->assertSame(404, $this->as(self::ALICE, 'GET', self::STORAGE . 'access/other/')->getStatusCode());
     $this->assertSame(404, $this->as(self::ALICE, 'GET', self::GRANTS . '00000000-0000-4000-8000-000000000000')->getStatusCode());
@@ -370,6 +371,24 @@ final class AccessServiceTest extends LwsStorageKernelTestBase {
     $this->as(self::BOB, 'POST', self::REQUESTS, self::document('AccessRequest'));
     $storage->delete();
     $this->assertSame([], $this->container->get('entity_type.manager')->getStorage('lws_access')->loadMultiple());
+  }
+
+  /**
+   * Tests the LWS profile: a listing is in it, as a container; an entry not.
+   */
+  public function testProfile(): void {
+    $profile = 'application/ld+json; profile="https://www.w3.org/ns/lws/v1"';
+    $response = $this->as(self::ALICE, 'GET', self::GRANTS, NULL, ['Accept' => $profile]);
+    $this->assertSame(200, $response->getStatusCode());
+    $this->assertSame($profile, $response->headers->get('Content-Type'));
+    $this->assertSame('Accept', $response->headers->get('Vary'));
+    $this->assertSame(406, $this->as(self::ALICE, 'GET', self::GRANTS, NULL, ['Accept' => 'application/ld+json; profile="https://example.org/other"'])->getStatusCode());
+
+    $grant = (string) $this->as(self::ALICE, 'POST', self::GRANTS, self::document('AccessGrant'))->headers->get('Location');
+    $this->assertSame(406, $this->as(self::ALICE, 'GET', $grant, NULL, ['Accept' => $profile])->getStatusCode());
+    $response = $this->as(self::ALICE, 'GET', $grant, NULL, ['Accept' => $profile . ', application/ld+json;q=0.5']);
+    $this->assertSame(200, $response->getStatusCode());
+    $this->assertSame('application/ld+json', $response->headers->get('Content-Type'));
   }
 
 }

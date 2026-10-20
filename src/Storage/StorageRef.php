@@ -19,7 +19,8 @@ final class StorageRef {
    * @param string $slug
    *   The URI segment naming the storage.
    * @param string $uri
-   *   The storage URI, which is also the realm of its 401 challenges.
+   *   The storage URI, which its 401 responses link to, and the audience of
+   *   its tokens.
    * @param list<string> $controllers
    *   The agents with full control of the storage.
    * @param string|null $authorizationServer

@@ -64,6 +64,14 @@ services:
     arguments: ['@lws_authz.keys', '@datetime.time', '@config.factory', '@logger.channel.lws_authz']
   Drupal\lws_authz\Token\AccessTokenValidator: '@lws_authz.access_token_validator'
 
+  # Routes /.well-known/oauth-protected-resource/… to the metadata's route.
+  lws_authz.resource_metadata_path_processor:
+    class: Drupal\lws_authz\Routing\ResourceMetadataPathProcessor
+    tags:
+      # Above path_processor_decode (1000), so that the path still matches the
+      # request's raw, percent-encoded path, as for lws.path_processor.
+      - { name: path_processor_inbound, priority: 1100 }
+
   lws_authz.authentication.lws_bearer:
     class: Drupal\lws_authz\Authentication\LwsBearerProvider
     arguments:
@@ -72,12 +80,14 @@ services:
       - '@?Drupal\lws\Storage\StorageRegistryInterface'
       - '@lws_authz.authorization_servers'
       - '@lws_authz.access_token_validator'
+      - '@config.factory'
       - '@logger.channel.lws_authz'
       # Provided by lws_agent_users: the Drupal users agents act as.
       - '@?Drupal\lws\Agent\AgentUsersInterface'
     tags:
       # Above basic_auth (100) and cookie (0). It applies only in the LWS URL
-      # space, so it takes nothing from other providers elsewhere.
+      # space and to protected resource metadata, so it takes nothing from
+      # other providers elsewhere.
       - { name: authentication_provider, provider_id: lws_bearer, priority: 200 }
 
   # The policy decision point (DESIGN.md §6.5).

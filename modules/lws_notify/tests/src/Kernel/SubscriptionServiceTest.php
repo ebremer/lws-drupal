@@ -106,7 +106,7 @@ final class SubscriptionServiceTest extends NotifyKernelTestBase {
     $this->assertSame(0, $this->json($this->as(self::BOB, 'GET', '/lws/alice/notifications/'))['totalItems']);
     $challenge = $this->as(NULL, 'GET', $path);
     $this->assertSame(401, $challenge->getStatusCode());
-    $this->assertStringStartsWith('Bearer ', (string) $challenge->headers->get('WWW-Authenticate'));
+    $this->assertStringStartsWith('Bearer resource_metadata="' . self::BASE . '/.well-known/oauth-protected-resource' . $path . '"', (string) $challenge->headers->get('WWW-Authenticate'));
     $this->assertSame(401, $this->as(NULL, 'GET', '/lws/alice/notifications/')->getStatusCode());
   }
 
@@ -284,6 +284,23 @@ final class SubscriptionServiceTest extends NotifyKernelTestBase {
 
     $this->container->get('entity_type.manager')->getStorage('lws_storage')->load($storage->id)?->delete();
     $this->assertSame([], $this->container->get('entity_type.manager')->getStorage('lws_subscription')->loadMultiple());
+  }
+
+  /**
+   * Tests the LWS profile: the listing is in it, a subscription is not.
+   */
+  public function testProfile(): void {
+    $profile = 'application/ld+json; profile="https://www.w3.org/ns/lws/v1"';
+    $listing = $this->as(self::ALICE, 'GET', '/lws/alice/notifications/', ['Accept' => $profile]);
+    $this->assertSame(200, $listing->getStatusCode());
+    $this->assertSame($profile, $listing->headers->get('Content-Type'));
+    $this->assertSame(406, $this->as(self::ALICE, 'GET', '/lws/alice/notifications/', ['Accept' => 'application/ld+json; profile="https://example.org/other"'])->getStatusCode());
+
+    $uri = (string) $this->subscribe(self::ALICE, ['root/'])->headers->get('Location');
+    $path = (string) parse_url($uri, PHP_URL_PATH);
+    $this->assertSame(406, $this->as(self::ALICE, 'GET', $path, ['Accept' => $profile])->getStatusCode());
+    $read = $this->as(self::ALICE, 'GET', $path, ['Accept' => $profile . ', application/ld+json;q=0.5']);
+    $this->assertSame('application/ld+json', $read->headers->get('Content-Type'));
   }
 
 }

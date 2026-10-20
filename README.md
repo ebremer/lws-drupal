@@ -31,7 +31,7 @@ allow:
 | Request | Response |
 |---|---|
 | `GET /lws/{storage}/` | The storage description (`application/lws+cid`, or `ld+json`/`json` by `Accept`), to anyone |
-| `GET`/`HEAD` a container | A listing (`application/lws+json`, or `ld+json`/`json`) with each member's type, media type, size and modification time, in pages (100 members by default) linked with `first`, `next`, `prev` and `last` |
+| `GET`/`HEAD` a container | A listing (`application/lws+json`, or `ld+json`/`json`) with each member's type, media type, size and modification time, in pages (100 members by default) linked with `first`, `next`, `prev` and `last`. `ld+json` asked for in the LWS profile (`profile="https://www.w3.org/ns/lws/v1"`) names it in `Content-Type`; there is no Turtle or other RDF (`406`), in the profile or not |
 | `GET`/`HEAD` a data resource | Its bytes, with byte ranges (`206`, `416`) |
 | `POST` to a container | `201` and `Location`: a data resource from the body, or a container with `Link: <https://www.w3.org/ns/lws#Container>; rel="type"`. The `Slug` header suggests the name |
 | `PUT` a data resource | `204`: its content replaced. There is no create-by-`PUT` |
@@ -53,9 +53,10 @@ allow:
 | `GET /lws/roles/{role}` | With `lws_agent_users`: `404`. A role URI names a Drupal role as the assignee of access policies, and nothing else ([Agent users](#agent-users)) |
 | `GET /lws/{projection}/root/{entity type}/{bundle}/{id}` | With `lws_projection`: an entity a visitor may view, as JSON (`application/json`), in a read-only storage ([Projections](#projections)) |
 | `GET /.well-known/lws-configuration` | The authorization server's metadata (RFC 8414) |
+| `GET /.well-known/oauth-protected-resource/lws/{storage}/…` | The protected resource metadata (RFC 9728) of a URL of a storage: that URL, character for character, and the storage's authorization server, to anyone; the same for every URL of the storage. `404` for one that names no storage |
 | `POST /lws/oauth/token` | Token exchange (RFC 8693): a self-signed credential or an OpenID Connect ID Token for an access token to a storage |
 | `GET /lws/oauth/jwks` | The keys that sign access tokens |
-| No token, or a rejected one | `401` with a Bearer challenge: `as_uri` (the authorization server), `realm` (the storage) and, for a rejected token, `error` |
+| No token, or a rejected one | `401` with a Bearer challenge whose `resource_metadata` is the URL of the protected resource metadata of the URL requested, a `Link` to the storage, whose URI a token is asked for, and, for a rejected token, `error`. By default also `as_uri` (the authorization server) and `realm` (the storage), for clients of earlier drafts |
 | A valid token, but no policy allows it | `403`, or `404` with `lws.settings:conceal_existence` |
 | Over the storage's quota | `507` |
 | A body larger than the largest content, or than PHP's `post_max_size` for a `POST` | `413`, before any of it is read |
@@ -387,8 +388,17 @@ drush lws:projection:sync content    # one
 A storage accepts RFC 9068 access tokens (`typ: at+jwt`, signed with ES256,
 ES384, EdDSA, RS256, RS384, RS512, PS256, PS384 or PS512) from one authorization server: its own, set with
 `lws:storage:create --authorization-server=<id>`, or the site's default. A token
-must name that server as `iss` and the storage URI, alone, as `aud` (LWS Core
-§5.2.4).
+must name that server as `iss` and include the storage URI in `aud` (LWS Core
+§5.2.4); the site's own server issues tokens for the storage alone.
+
+Clients find the server from a refusal. A `401` names, in its challenge's
+`resource_metadata`, the protected resource metadata (RFC 9728) of the URL
+requested, at `/.well-known/oauth-protected-resource` followed by that URL's
+path and query, which names the URL and the storage's authorization server;
+its `Link` to the storage gives the URI a client asks a token for. The
+challenge also carries `as_uri` and `realm`, which the drafts before 19 October
+2026 used instead, until *Keep the challenge parameters of earlier drafts* is
+turned off in the authorization settings (`lws_authz.settings:legacy_challenge`).
 
 By default that server is the site's own, `local`. Its issuer is the LWS base
 URL without a trailing slash. For a site at the root of its host that is the
@@ -439,8 +449,9 @@ makes a new one, and the old one is published until its tokens have expired.
 
 Other servers are trusted at *Configuration › Web services › LWS authorization
 servers* or with `lws:as:add`, `lws:as:list` and `lws:as:delete`; the settings
-there choose the default server, the authentication suites and the token
-lifetime. A trusted server's signing keys are either pinned (`--jwks=<file>`) or
+there choose the default server, the authentication suites, the token
+lifetime, and whether challenges keep `as_uri` and `realm`. A trusted server's
+signing keys are either pinned (`--jwks=<file>`) or
 fetched from the `jwks_uri` of its metadata at `/.well-known/lws-configuration`,
 cached for an hour and fetched again when a token names an unknown key.
 
@@ -492,7 +503,8 @@ ddev drush en lws_storage -y
 ddev drush config:set lws.settings base_url https://lws-drupal.ddev.site -y
 ddev drush lws:storage:create alice
 curl -i https://lws-drupal.ddev.site/lws/alice/         # the storage description
-curl -i https://lws-drupal.ddev.site/lws/alice/root/    # 401, naming the site's authorization server
+curl -i https://lws-drupal.ddev.site/lws/alice/root/    # 401, naming its protected resource metadata
+curl -i https://lws-drupal.ddev.site/.well-known/oauth-protected-resource/lws/alice/root/   # which names the authorization server
 ```
 
 Checks, as CI runs them:
@@ -534,7 +546,9 @@ such as `mysql://root:secret@127.0.0.1/lws_test` or
   the keys. A site below the root of its host, whose base URL has a path,
   needs the web server or a proxy to send
   `/.well-known/lws-configuration/<path>` to the site's own
-  `/.well-known/lws-configuration`.
+  `/.well-known/lws-configuration`, and
+  `/.well-known/oauth-protected-resource/<path>/…` to the site's own
+  `/.well-known/oauth-protected-resource/…`.
 - **Configure the private file system.** Data resources keep their content there,
   under `private://lws/`; until it is set they cannot be created, and the status
   report says so. Another stream wrapper can be chosen with
@@ -551,8 +565,9 @@ such as `mysql://root:secret@127.0.0.1/lws_test` or
   content in the public file system as an error: anyone who learned a file's
   location could download it, whatever LWS policy says.
 - **Let clients find the authorization server.** The status report fetches
-  the issuer's metadata, as clients do, and warns if a proxy or the web server
-  does not pass it to Drupal.
+  the issuer's metadata, and the protected resource metadata of the first
+  storage, as clients do, and warns if a proxy or the web server does not pass
+  them to Drupal.
 - **Run cron,** which deletes the files of recursively deleted resources and of
   deleted storages, and with `lws_notify` retries notification deliveries.
 - **Notifications** (`lws_notify`) are signed with keys kept like the

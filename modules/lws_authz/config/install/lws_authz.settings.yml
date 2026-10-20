@@ -1,5 +1,6 @@
 authorization_server: local
 clock_skew: 60
+legacy_challenge: true
 token_lifetime: 300
 suites:
   - ssi_cid

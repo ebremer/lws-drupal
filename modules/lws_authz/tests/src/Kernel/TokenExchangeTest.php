@@ -13,6 +13,7 @@ use Ebremer\Lws\Auth\DidKey;
 use Ebremer\Lws\Auth\Jwt;
 use Ebremer\Lws\Auth\SelfSignedCredentials;
 use Ebremer\Lws\Auth\SigningKey;
+use Ebremer\Lws\Http\WwwAuthenticate;
 use GuzzleHttp\Client;
 use GuzzleHttp\HandlerStack;
 use GuzzleHttp\Promise\FulfilledPromise;
@@ -256,9 +257,10 @@ final class TokenExchangeTest extends LwsStorageKernelTestBase {
 
     // The storage accepts it.
     $this->assertSame(200, $this->send('GET', '/lws/alice/root/', ['Authorization' => 'Bearer ' . $token])->getStatusCode());
-    // Its challenge sends clients to this server.
-    $challenge = (string) $this->send('GET', '/lws/alice/root/')->headers->get('WWW-Authenticate');
-    $this->assertStringContainsString('as_uri="' . self::BASE . '"', $challenge);
+    // Its challenge names metadata that sends clients to this server.
+    $challenge = WwwAuthenticate::parse((string) $this->send('GET', '/lws/alice/root/')->headers->get('WWW-Authenticate'))[0];
+    $this->assertSame(self::BASE . '/.well-known/oauth-protected-resource/lws/alice/root/', $challenge->resourceMetadata());
+    $this->assertSame([self::BASE], $this->json($this->send('GET', '/.well-known/oauth-protected-resource/lws/alice/root/'))['authorization_servers']);
 
     // The resource without its trailing slash is the audience as given.
     $token = $this->assertIssued($this->tokenRequest($this->exchange($this->credential(), rtrim(self::STORAGE, '/'))));
@@ -302,8 +304,13 @@ final class TokenExchangeTest extends LwsStorageKernelTestBase {
     $this->assertSame($base, $claims['iss']);
     $this->assertSame($storage, $claims['aud']);
     $this->assertSame(200, $this->send('GET', '/lws/alice/root/', ['Authorization' => 'Bearer ' . $token])->getStatusCode());
-    $challenge = (string) $this->send('GET', '/lws/alice/root/')->headers->get('WWW-Authenticate');
-    $this->assertStringContainsString('as_uri="' . $base . '"', $challenge);
+    // The proxy sends the metadata URL, which has the well-known segment
+    // before the path, to the site's own well-known path.
+    $challenge = WwwAuthenticate::parse((string) $this->send('GET', '/lws/alice/root/')->headers->get('WWW-Authenticate'))[0];
+    $this->assertSame(self::BASE . '/.well-known/oauth-protected-resource/targets/drupal/lws/alice/root/', $challenge->resourceMetadata());
+    $metadata = $this->json($this->send('GET', '/.well-known/oauth-protected-resource/lws/alice/root/'));
+    $this->assertSame($base . '/lws/alice/root/', $metadata['resource']);
+    $this->assertSame([$base], $metadata['authorization_servers']);
 
     // A credential for the origin alone is not for this server.
     $this->assertOauthError($this->tokenRequest($this->exchange($this->credential(['aud' => [self::BASE]]), $storage)), 'invalid_request');
@@ -353,6 +360,10 @@ final class TokenExchangeTest extends LwsStorageKernelTestBase {
       self::STORAGE . 'root/',
       self::STORAGE . '/',
       'http://storage.example/lws/alice/',
+      // A resource in the storage, as protected resource metadata names it,
+      // or that metadata's own URL: the storage is what the 401 links to.
+      self::STORAGE . 'root/notes.txt',
+      self::BASE . '/.well-known/oauth-protected-resource/lws/alice/',
     ] as $resource) {
       $this->assertOauthError($this->tokenRequest(['resource' => $resource] + $valid), 'invalid_target');
     }

@@ -30,8 +30,9 @@ interface AuthorizationServerInterface {
   /**
    * The issuer identifier.
    *
-   * It is the "iss" of the server's tokens, and the "as_uri" of 401
-   * challenges for the storages that trust it.
+   * It is the "iss" of the server's tokens, and the authorization server
+   * that the protected resource metadata of the storages that trust it
+   * names, to which their 401 challenges send clients.
    */
   public function getIssuer(): string;
 

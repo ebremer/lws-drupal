@@ -166,10 +166,12 @@ final class TrustedAuthorizationServerTest extends KernelTestBase {
     $this->assertSame(['local', 'main'], array_keys($built['authorization_server']['#options']));
     $this->assertSame('local', $built['authorization_server']['#default_value']);
     $this->assertArrayHasKey('ssi_cid', $built['local']['suites']['#options']);
+    $this->assertTrue($built['legacy_challenge']['#default_value']);
 
     $values = [
       'authorization_server' => 'main',
       'clock_skew' => 30,
+      'legacy_challenge' => NULL,
       'suites' => [],
       'token_lifetime' => 120,
       'rate_limit_client' => 10,
@@ -183,6 +185,7 @@ final class TrustedAuthorizationServerTest extends KernelTestBase {
     $settings = $this->config('lws_authz.settings');
     $this->assertSame('main', $settings->get('authorization_server'));
     $this->assertSame(30, $settings->get('clock_skew'));
+    $this->assertFalse($settings->get('legacy_challenge'));
     $this->assertSame([], $settings->get('suites'));
     $this->assertSame(120, $settings->get('token_lifetime'));
     $this->assertSame(['client' => 10, 'subject' => 5, 'access_requests' => 3], $settings->get('rate_limits'));

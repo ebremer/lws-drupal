@@ -46,9 +46,21 @@ final class ResourceController implements ContainerInjectionInterface {
   use AutowireTrait;
 
   /**
-   * The equivalent media types of a container representation (§12.1.1).
+   * The media types a container representation is offered in.
+   *
+   * The body is the same in each: application/lws+json, which LWS Core
+   * requires (Content Negotiation), read as JSON-LD or as plain JSON. Turtle
+   * and the other RDF media types are not offered (DESIGN.md §12).
    */
   private const CONTAINER_MEDIA_TYPES = [MediaType::LWS_JSON, MediaType::LD_JSON, MediaType::JSON];
+
+  /**
+   * The profiles a container representation is produced in, by media type.
+   *
+   * Its JSON-LD is the lws+json document, so it is in the LWS profile (LWS
+   * Core, LWS Profile), and in no other.
+   */
+  private const CONTAINER_PROFILES = [MediaType::LD_JSON => [Vocabulary::LWS_PROFILE]];
 
 
   /**
@@ -205,7 +217,7 @@ final class ResourceController implements ContainerInjectionInterface {
     if ($cursor !== NULL) {
       $this->pager->after($container, $cursor);
     }
-    $type = MediaTypeNegotiator::negotiate($request->headers->get('Accept'), self::CONTAINER_MEDIA_TYPES)
+    $type = MediaTypeNegotiator::negotiate($request->headers->get('Accept'), self::CONTAINER_MEDIA_TYPES, self::CONTAINER_PROFILES)
       ?? throw LwsHttpException::notAcceptable(self::CONTAINER_MEDIA_TYPES);
     $uri = $this->links->uri($storage, $container);
     $links = [...$this->links->headers($storage, $container), LinkHeader::format($uri, LinkRelation::FIRST)];
@@ -256,7 +268,7 @@ final class ResourceController implements ContainerInjectionInterface {
       'totalItems' => $page->total,
       'items' => $items,
     ];
-    $response = LwsResponse::json($body, $type->contentType([Vocabulary::LWS_CONTEXT]), $links, $etag, $headers);
+    $response = LwsResponse::json($body, $type->contentType(), $links, $etag, $headers);
     return $changed === NULL ? $response : $response->setLastModified(new \DateTimeImmutable('@' . $changed));
   }
 

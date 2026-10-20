@@ -190,11 +190,12 @@ sequenceDiagram
   participant A as Drupal lws_authz (AS)
   participant I as Identity (CID doc, OIDC OP, SAML IdP)
   C->>S: GET /lws/alice/root/notes/
-  S-->>C: 401 WWW-Authenticate Bearer as_uri=https://site.example realm=https://site.example/lws/alice/<br/>plus a Link header with rel lws storage pointing at the storage URI
+  S-->>C: 401 WWW-Authenticate Bearer resource_metadata=https://site.example/.well-known/oauth-protected-resource/lws/alice/root/notes/<br/>plus a Link header with rel lws storage pointing at the storage URI
+  C->>A: GET /.well-known/oauth-protected-resource/lws/alice/root/notes/ (resource, authorization_servers)
   C->>A: GET /.well-known/lws-configuration
-  C->>A: POST /lws/oauth/token (token-exchange, resource=realm, subject_token)
+  C->>A: POST /lws/oauth/token (token-exchange, resource=storage URI, subject_token)
   A->>I: dereference sub, OIDC discovery or trusted cert (cached, SSRF-guarded)
-  A-->>C: 200 access_token (at+jwt, aud=realm, at most 300 s), issued_token_type, token_type Bearer
+  A-->>C: 200 access_token (at+jwt, aud=storage URI, at most 300 s), issued_token_type, token_type Bearer
   C->>S: GET /lws/alice/root/notes/ with Authorization Bearer token
   S->>S: validate token (§5.2.4.2), then RequestingAgent, PDP, operation
   S-->>C: 200 application/lws+json with Link and ETag headers
@@ -206,7 +207,8 @@ sequenceDiagram
 
 ### 4.1 Layout
 
-**[D2]** Each storage gets a URI of its own, which is also its `realm` and the `aud` of its tokens.
+**[D2]** Each storage gets a URI of its own, which its `401` responses link to and which is the
+`aud` of its tokens.
 Its root container sits one level below it. System services live beside the root container, never
 inside it.
 
@@ -215,7 +217,8 @@ inside it.
 | `https://site.example/.well-known/lws-configuration` | AS metadata (RFC 8414) | `lws_authz` |
 | `https://site.example/lws/oauth/token` | Token endpoint (RFC 8693) | `lws_authz` |
 | `https://site.example/lws/oauth/jwks` | AS public keys | `lws_authz` |
-| `https://site.example/lws/{s}/` | **Storage URI** (`id`, `realm`, `aud`); serves the storage description | `lws_storage` |
+| `https://site.example/.well-known/oauth-protected-resource/lws/{s}/…` | Protected resource metadata (RFC 9728) of each URL of a storage ([§6.7](#67-protected-resource-metadata-and-the-401-challenge)) | `lws_authz` |
+| `https://site.example/lws/{s}/` | **Storage URI** (`id`, `aud`, the `401`'s storage link); serves the storage description | `lws_storage` |
 | `https://site.example/lws/{s}/root/` | Storage root container | `lws_storage` |
 | `https://site.example/lws/{s}/root/…` | Containers (`…/`) and data resources | `lws_storage` |
 | `https://site.example/lws/{s}/meta/{uuid}` | Linkset resource of the resource `{uuid}` | `lws_storage` |
@@ -231,8 +234,9 @@ Why this layout:
   `https://storage.example/root/`.
 - **It matches the PHP client's interop layout.** Its mock server and `InteropTest` use
   `{base}/` and `{base}/root/`, so the client's tests run against Drupal unchanged.
-- **The realm logically contains everything at a `/` boundary.** The client checks containment
-  that way, and a single token covers resources, linksets, grants and subscriptions.
+- **The storage contains everything at a `/` boundary.** A single token, whose audience is the
+  storage URI, covers resources, linksets, grants and subscriptions. Clients of the drafts before
+  19 October 2026 checked that containment against the challenge's `realm`.
 - **There are no name collisions.** Users can never create `meta`, `access` or `notifications`
   inside the root, because those names do not live in the root.
 - **The storage URI needs no content negotiation trick.** The alternative, which `lws-server`
@@ -280,6 +284,12 @@ keeps its case and keeps its trailing slash. It returns an `LwsTarget`: the stor
 5. **`DisallowLwsRequests`**, a page-cache request policy, keeps everything under the prefix, and
    any request carrying `Authorization: Bearer` or `DPoP`, out of the page cache.
 
+Protected resource metadata, at `/.well-known/oauth-protected-resource` followed by a resource's
+path ([§6.7](#67-protected-resource-metadata-and-the-401-challenge)), has the same problem of
+depth. `lws_authz`'s `ResourceMetadataPathProcessor` (priority 1100) maps every such path onto the
+one route at `/.well-known/oauth-protected-resource`, whose controller reads the raw path from the
+request; the route is `no_cache`, so the page cache never stores it either.
+
 Internal routes match on method. Every LWS route carries:
 
 - `_auth: ['lws_bearer']`. Cookie authentication is never used on LWS routes; see
@@ -310,7 +320,7 @@ per project, and must not be exported with site config.
 | `label` | string | |
 | `controllers` | string (URI), multiple | *Storage controllers* (agents) with full control |
 | `owner` | entity ref → `user`, optional | Drupal user who administers it in the UI |
-| `authorization_server` | string | `local`, or the id of an `lws_trusted_as` config entity; supplies `as_uri` |
+| `authorization_server` | string | `local`, or the id of an `lws_trusted_as` config entity; the `authorization_servers` of the storage's protected resource metadata |
 | `quota_bytes`, `used_bytes` | integer | `507` when exceeded |
 | `settings` | map | Page size, `require_if_match`, `conceal_existence`, … (defaults come from `lws_storage.settings`) |
 | `status`, `created`, `changed` | | A blocked storage answers `503` |
@@ -362,7 +372,7 @@ Every write is one database transaction. The table maps each operation to its HT
 |---|---|
 | **Storage description** `GET/HEAD {s}/` | CID document ([§5.5](#55-storage-description)). `application/lws+cid` by default; `application/ld+json` and `application/json` by negotiation; otherwise `406`. `Vary: Accept`. Readable by anyone. `Link: <{s}/>; rel="…lws#storage"` (§6.1) |
 | **Read data resource** `GET/HEAD` | The stored bytes with the stored `Content-Type`. Headers: `ETag` (strong), `Last-Modified`, `Accept-Ranges: bytes`, single-range `206`/`416` (§9.3, RFC 7233), `Allow`, `Accept-Patch` (JSON resources), and `Link` for `linkset` (`type="application/linkset+json"`), `up`, `type` (`lws#DataResource` plus user types) and `lws#storage` (§9.1, §9.3). Served with Symfony `BinaryFileResponse` for local stream wrappers, and a ranged `StreamedResponse` otherwise |
-| **Read container** `GET/HEAD` | Container representation (§8.1) with items `{id, type, format, size, modified}`; `format` is always present on data resources. `application/lws+json`, `application/ld+json` and `application/json` are equivalent: `Content-Type` echoes the request and `Vary: Accept` is sent (§12.1.1). Anything else is `406`. Paginated: see [§5.6](#56-container-listings-and-pagination) |
+| **Read container** `GET/HEAD` | Container representation (§8.1) with items `{id, type, format, size, modified}`; `format` is always present on data resources. `application/lws+json`, which LWS Core requires, and the same document as `application/ld+json` and `application/json`; `Content-Type` names the type chosen, and `Vary: Accept` is sent. JSON-LD asked for in the LWS profile (`profile="https://www.w3.org/ns/lws/v1"`, alone or in a list) names the profile in `Content-Type`; JSON-LD asked for only in other profiles is not chosen. Turtle and the other RDF media types are not offered ([§12](#12-spec-interpretation-decisions), #18). Anything else is `406`. Paginated: see [§5.6](#56-container-listings-and-pagination) |
 | **Conditional read** | `If-None-Match` / `If-Modified-Since` → `304`; `If-Range` (§9.3; RFC 9110 §13) |
 | **Create** `POST` to a container | Creates a container when `Link: <https://www.w3.org/ns/lws#Container>; rel="type"` is present (body ignored), otherwise a data resource from the body and `Content-Type`. The name comes from the `Slug` hint, sanitised to `[A-Za-z0-9._~-]` and made unique (`a.txt` → `a-1.txt`), or else from a generated id. A name never starts with `.`: Drupal's `.htaccess` refuses such path segments with `403`. Other `Link` headers become user-managed metadata (`rel="type"` → `types`); server-managed relations in them are ignored (§9.2). Response: `201`, absolute `Location`, `Link` for `up`, `linkset` and `type`, and `ETag`. Missing target → `404`; target is not a container → `405`. Quota → `507`; rejected by a Drupal file validator → `422` |
 | **Replace** `PUT` | Data resources only. Replaces bytes and media type. Missing resource → `404` (§9.4: there is no PUT-to-create); container → `405`. `204` on success. With `Prefer: set-linkset` and `Link` headers, also replaces the user-managed links atomically and answers `Preference-Applied: set-linkset` |
@@ -454,7 +464,8 @@ LWS clients always read content through its LWS URL.
    LWS request, and outside the prefix `Bearer` is left to `simple_oauth`. The provider never
    throws. It looks the storage up through `StorageRegistryInterface`, validates any token against
    the storage's authorization server and URI, and puts an `Authentication` (agent, RFC 6750 error,
-   realm, `as_uri`) in the request attribute `_lws_auth`. A valid token also makes the current user
+   storage URI, issuer, and whether the challenge keeps the parameters of earlier drafts) in the
+   request attribute `_lws_auth`. A valid token also makes the current user
    an `LwsAccount`. A failed validation is acted on by the access check, after routing.
 3. **Path processing.** `LwsPathProcessor` maps the URL to an internal route path, and
    `LwsRouteEnhancer` gives the controller `$lws_target`
@@ -491,9 +502,10 @@ LWS clients always read content through its LWS URL.
    - for data resources, `X-Content-Type-Options: nosniff` and `Content-Security-Policy: sandbox`
      (see [§8.4](#84-security)).
 7. **Exception subscriber** (LWS paths only). Renders problem details. A `401` adds
-   `WWW-Authenticate: Bearer as_uri="…", realm="{s}/"[, error="…"]` and
-   `Link: <{s}/>; rel="…lws#storage"` (§5.2.1, §9.2). A `405` adds `Allow`; a `415` adds
-   `Accept-Patch`.
+   `WWW-Authenticate: Bearer resource_metadata="…"[, as_uri="…", realm="{s}/"][, error="…"]` and
+   `Link: <{s}/>; rel="…lws#storage"` (Authorization Server Discovery, §9.2;
+   [§6.7](#67-protected-resource-metadata-and-the-401-challenge)). A `405` adds `Allow`; a `415`
+   adds `Accept-Patch`.
 8. **After commit.** The storage dispatches `LwsResourceEvent` (`created`, `updated`,
    `metadata_updated`, `deleted`) once the transaction has committed: right after the
    operation, or at the end of the request when an outer transaction committed it, never from
@@ -625,8 +637,10 @@ different one. Clients must not depend on it; `Accept-Patch` is the normative si
    - Keys are cached in a `cache.lws` bin.
    - An unknown `kid` triggers one refetch, rate-limited by flood control (key rotation, as
      §5.2.4.2 requires).
-4. **Audience.** `aud` must have **exactly one** value, equal to the storage URI that contains the
-   target (§5.2.4.2).
+4. **Audience.** `aud`, a string or an array of strings, must **include** the URI of the storage
+   that contains the target, with or without its trailing slash (Access Token Validation). Until
+   the drafts of 19 October 2026 it had to be that URI alone. This site's server issues tokens with
+   that one value, as the Security Considerations advise (Audience Binding).
 5. **Time.** `exp` must be in the future; `nbf`, if present, must have passed; `iat` must not be in
    the future. Clock skew allowed: 60 s, configurable.
 6. **Required claims.** `sub` (a URI), `client_id` (a URI) and `jti` must be present (§5.2.3.2).
@@ -698,7 +712,8 @@ first error:
 2. Check that `resource`, `subject_token` and `subject_token_type` are present (`resource` is
    required by §5.2.3.1; the other two by RFC 8693). Otherwise → `invalid_request`.
 3. Check that `resource` is a known storage URI, local or configured remote, and is trusted
-   (§5.2.3.1). Otherwise → `invalid_target`.
+   (§5.2.3.1): the URI the `401`'s `lws#storage` link names, not that of the resource requested,
+   which protected resource metadata names. Otherwise → `invalid_target`.
 4. Select the authentication suite plugin by `subject_token_type`. A disabled or unknown type →
    `invalid_request`.
 5. The suite validates the credential ([§6.4](#64-authentication-suites)) and returns a
@@ -869,6 +884,63 @@ subscription covers the requests service.
 The section is marked "needs to align" in the core, so the payload is the core notification data
 model.
 
+### 6.7 Protected resource metadata and the 401 challenge
+
+Since the drafts of 19 October 2026 a client finds the authorization server through OAuth 2.0
+Protected Resource Metadata (RFC 9728), as LWS Core's Authorization Server Discovery describes.
+
+- **The challenge.** Every `401` in the LWS URL space carries
+  `WWW-Authenticate: Bearer resource_metadata="<URL>"` and the `lws#storage` link, now a MUST,
+  whose URI the client sends as the token request's `resource` ([§6.3](#63-token-exchange-523)).
+  The URL is that of the metadata **of the URL the client requested**: the origin of the base URL,
+  `/.well-known/oauth-protected-resource`, the base URL's path, the path Drupal received (raw,
+  still percent-encoded) and the query as sent (RFC 9728 §3.1). `LwsExceptionSubscriber` is the
+  only place a challenge is made: `BearerChallenge::unauthorized()` formats it, and
+  `LwsUrlGenerator::requestUri()` and `resourceMetadataUri()` build the URL. A rejected token adds
+  `error` and `error_description`. A storage without an authorization server still answers `503`:
+  there is no metadata to point to.
+- **Earlier drafts.** `as_uri` (the issuer) and `realm` (the storage URI) follow
+  `resource_metadata` while `lws_authz.settings:legacy_challenge` is on, the default; update 11005
+  turns it on for existing sites. The drafts let a challenge carry other parameters, and clients of
+  the drafts of 5 October 2026 look for these. `lws_authz` records the setting on the
+  `Authentication` outcome, so `lws` never reads `lws_authz`'s configuration.
+- **The document.** `GET` and `HEAD /.well-known/oauth-protected-resource{path}[?query]` answer
+  `200` with `application/json`:
+
+  ```json
+  {
+    "resource": "https://site.example/lws/alice/root/notes/",
+    "authorization_servers": ["https://site.example"],
+    "bearer_methods_supported": ["header"]
+  }
+  ```
+
+  - `resource` is the base URL, then what follows the well-known segment, then the query:
+    character for character the URL requested, since a client discards metadata whose `resource`
+    is not identical to it (RFC 9728 §3.3). Nothing is decoded or normalised.
+  - `authorization_servers` holds the issuer of the storage's one authorization server
+    (`AuthorizationServers::forStorage()`), which LWS Core makes REQUIRED.
+  - There are no DPoP members (Q6), and no `resource_name`: a storage's label is published
+    nowhere else.
+- **Nothing revealed, no token needed.** The path is parsed as the request for the resource
+  would be, and only the storage it names counts: the document is the same for every URL of a
+  storage, of a resource that exists or not, readable or not, apart from `resource`, which only
+  repeats the request. Nothing stored is looked up. A path that names no storage, a storage
+  without an authorization server, or a place where nothing can be (an unknown or malformed path)
+  gets `404` problem details. `lws_bearer` claims these requests and leaves them anonymous, so no
+  `Authorization` header, stale, invalid or of another scheme, can have another provider refuse
+  them.
+- **Caching and CORS.** `Cache-Control: public, max-age=300`, as for the AS metadata; the route is
+  `no_cache`, so the page cache never keeps it. Any origin may read it, preflight included.
+- **Sites below the root.** For the base URL `https://host.example/site`, the metadata of
+  `https://host.example/site/lws/alice/root/` is at
+  `https://host.example/.well-known/oauth-protected-resource/site/lws/alice/root/`, outside the
+  site. The web server or a proxy must send `/.well-known/oauth-protected-resource/site/…` to the
+  site's own `/.well-known/oauth-protected-resource/…`, as it sends the AS metadata
+  ([§6.2](#62-authorization-server-metadata-522)). The status report (`lws_storage`) fetches the
+  metadata of the first storage as a client would, and says where to send it when it does not
+  arrive.
+
 ---
 
 ## 7. Optional modules
@@ -1014,8 +1086,9 @@ It is the inverse of `lws_identity`, which gives Drupal users agent URIs.
 
 ### 8.2 CORS
 
-Browser clients need CORS on every LWS route, the token endpoint and the metadata. `lws` handles
-CORS for its own paths with a response subscriber and the `OPTIONS` routes:
+Browser clients need CORS on every LWS route, the token endpoint, the AS metadata and protected
+resource metadata. `lws` handles CORS for its own paths with a response subscriber and the
+`OPTIONS` routes:
 
 - methods: `GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS, QUERY`;
 - allowed headers include `Authorization`, `Content-Type`, `If-Match`, `If-None-Match`,
@@ -1047,7 +1120,7 @@ Core's site-wide `cors.config` can stay off.
 |---|---|
 | **Stored XSS from user content served on the Drupal origin.** An uploaded HTML or SVG file opened in a browser would run with access to admin sessions | Data resources are always sent with `Content-Security-Policy: sandbox` and `X-Content-Type-Options: nosniff`. **[D8]** We recommend serving LWS from a **separate, cookie-less hostname** (`storage.site.example`) that maps to the same Drupal: set `lws.settings:base_url` and allow the host in `trusted_host_patterns`. `hook_requirements()` warns when LWS shares the admin origin |
 | CSRF through cookies | LWS routes accept no cookie authentication (`_auth: ['lws_bearer']` only), and bearer tokens are not ambient |
-| Host-header injection into `realm`/`aud`/`Location` | Canonical URIs come from config only. The `trusted_host_patterns` setting is required |
+| Host-header injection into storage URIs, `resource_metadata`, `aud` or `Location` | Canonical URIs come from config only. The `trusted_host_patterns` setting is required |
 | Token theft and replay | Tokens last ≤300 s and are bound to one audience. Tokens are never logged (hash prefixes only). `Cache-Control: no-store` on token responses. DPoP is a later step ([§14](#14-open-questions)) |
 | JOSE pitfalls | `alg` allow-list per key type. `none` and `HS*` are rejected. The key type must match `alg`. `typ` is checked. The `kid` must belong to the expected issuer or subject |
 | SSRF through `sub`, `iss`, `jwks_uri` and inbox URLs | `lws.outbound_http` guard ([§6.4](#64-authentication-suites)) |
@@ -2350,6 +2423,10 @@ makes. Where `lws-server` (the Java implementation) chose differently, that is n
 | 15 | Denied but existing | `403` by default; `404` when `conceal_existence` is on | §9.5 MUST `403`, MAY `404` |
 | 16 | Notification payload for access requests and grants | The core notification data model | §11.6 is marked "needs to align" |
 | 17 | Drupal role assignees | Extension URIs `…/lws/roles/{role}` (with `lws_agent_users`) | The access profile allows any URI as an `assignee`; role membership stays inside Drupal and is never disclosed |
+| 18 | Containers in RDF media types | Only `application/lws+json`, and the same document as `application/ld+json` (in the LWS profile when asked) and as `application/json`. `text/turtle`, `application/trig`, `application/n-triples` and `application/n-quads` → `406`, in the profile or not. JSON-LD asked for only in other profiles, JSON-LD's own forms (`…/json-ld#compacted`) among them, is not chosen | The drafts require only `lws+json` (LWS Profile, Content Negotiation), and a server must not choose an RDF media type it cannot produce the profile in. Turtle isomorphic to the `lws+json` needs a JSON-LD 1.1 processor, which this module does not have ([§1](#1-goals-and-non-goals)). *`lws-server` serves Turtle, N-Triples, RDF/XML, TriG and N-Quads in the profile, derived from the `lws+json` page* |
+| 19 | The LWS profile beyond containers | The notification service's listing and the access request and grant services, which are LWS containers, negotiate as containers do. Their entries, the type index and pages of search results are in no profile: JSON-LD asked for in one is not chosen for them, and none is named | The profile is defined for container representations, and lws10-index says a search's `ContainerPage` is not one. *`lws-server` does the same* |
+| 20 | `as_uri` and `realm` in challenges | Still sent, after `resource_metadata`, unless `lws_authz.settings:legacy_challenge` is off | The drafts of 19 October 2026 replaced them but allow other parameters, and clients of earlier drafts look for them. *`lws-server` does the same (`lws.oauth.legacy-challenge`)* |
+| 21 | Protected resource metadata of URLs that name no protected resource | `404` for a path that names no storage, a storage without an authorization server, or a place where nothing can be; the same document for every other URL of a storage, whether anything is there or not | Storages are public, so the `404` reveals nothing, and within a storage nothing stored is looked up ([§6.7](#67-protected-resource-metadata-and-the-401-challenge)). *`lws-server` holds one storage, and answers every path alike* |
 
 ---
 
@@ -2414,11 +2491,11 @@ Each MUST in LWS Core (WD 2026-10-05) that falls on a server, and the step that 
 
 | § | Requirement | Step |
 |---|---|---|
-| 5.2.1 | `401` carries `WWW-Authenticate` with `as_uri` and `realm` | A1 |
+| 5.2.1 | `401` carries `WWW-Authenticate` with `resource_metadata` (RFC 9728), the URL of the protected resource metadata of the URL requested, which names an authorization server, and a `Link` to the storage (drafts of 19 October 2026; `as_uri` and `realm` before) | A1, [§6.7](#67-protected-resource-metadata-and-the-401-challenge) |
 | 5.2.2 | AS metadata (RFC 8414) at `/.well-known/lws-configuration` | A2 |
 | 5.2.3.1 | Token endpoint supports token exchange; `resource` required and must be a known, trusted storage; all presented tokens validated | A2 |
 | 5.2.3.2 | RFC 6749 §5.1 response; RFC 9068 token with `sub`, `iss`, `client_id`, `aud`, `exp`, `iat`, `jti`; §5.2 errors | A2 |
-| 5.2.4.2 | Signature (from `jwks_uri`, key rotation), `iss`, single `aud`, `exp`/`nbf`/`iat`; `401` with `error` on failure; deny when policy forbids | A1, A3 |
+| 5.2.4.2 | Signature (from `jwks_uri`, key rotation), `iss`, `aud` including the storage URI (a single `aud` before 19 October 2026), `exp`/`nbf`/`iat`; `401` with `resource_metadata` and `error` on failure; deny when policy forbids | A1, A3 |
 | 6.1.1 | Description: `id` = storage URI, `type` ∋ `Storage`, `service` with `StorageRoot` | S1 |
 | 6.1.2 | `Link rel="…lws#storage"` on every `GET`/`HEAD`; storage URI returns `application/lws+cid` | S1 |
 | 6.1.5 | `@context` begins `[cid/v1, lws/v1]` | S1 |
@@ -2434,4 +2511,4 @@ Each MUST in LWS Core (WD 2026-10-05) that falls on a server, and the step that 
 | 9.5 | Atomic removal from the parent; non-empty container without recursion → `409`; `204`; `403` vs `401` | S2, A1 |
 | 10.x | `NotificationService`, data model, authorization at subscription and at delivery (if advertised) | S6 |
 | 11.x | Services advertised; `Location` on `POST`; JSON-LD serialization; actions and constraints supported (if advertised) | A4 |
-| 12.1 | Description serializable as `application/lws+cid`; containers support `application/lws+json`; `lws+json`/`ld+json`/`json` equivalence with `Content-Type` echoed; pagination `first`, `next`, `200` | S1, S3 |
+| 12.1 | Description serializable as `application/lws+cid`; containers support `application/lws+json`, with `Content-Type` naming the type chosen; an RDF media type with the LWS profile is chosen only if the server produces the profile in it, and then names it (`lws+json`/`ld+json`/`json` equivalence before 19 October 2026); pagination `first`, `next`, `200` | S1, S3 |

@@ -118,4 +118,67 @@ final class StatusReportTest extends LwsStorageKernelTestBase {
     $this->assertStringStartsWith($base . ';', (string) $requirements['lws_authz_local_server']['value']);
   }
 
+  /**
+   * Tests the entry for the protected resource metadata of storages.
+   *
+   * The report asks for that of the first storage, as a client would.
+   */
+  public function testResourceMetadata(): void {
+    $document = [
+      'resource' => self::BASE . '/lws/alice/',
+      'authorization_servers' => [self::ISSUER],
+      'bearer_methods_supported' => ['header'],
+    ];
+    $json = ['Content-Type' => 'application/json'];
+    $responses = new MockHandler([
+      new Response(200, $json, (string) json_encode($document)),
+      new Response(404),
+      new Response(200, $json, (string) json_encode(['resource' => self::BASE . '/lws/alice/root/'] + $document)),
+      new Response(200, $json, (string) json_encode(['authorization_servers' => ['https://other.example']] + $document)),
+    ]);
+    $this->container->set('http_client', new Client(['handler' => HandlerStack::create($responses)]));
+    $hooks = $this->container->get(LwsStorageRequirements::class);
+    $this->assertInstanceOf(LwsStorageRequirements::class, $hooks);
+    // Without a storage there is nothing to ask about.
+    $this->assertArrayNotHasKey('lws_storage_resource_metadata', $hooks->runtime());
+
+    $this->storages->createStorage('alice', 'Alice');
+    $this->assertSame(RequirementSeverity::OK, $this->severity($hooks, 'lws_storage_resource_metadata'));
+    $this->assertSame(self::BASE . '/.well-known/oauth-protected-resource/lws/alice/', (string) $responses->getLastRequest()?->getUri());
+    $requirements = $hooks->runtime();
+    $this->assertSame(RequirementSeverity::Warning, $requirements['lws_storage_resource_metadata']['severity']);
+    $this->assertStringContainsString('passes /.well-known/oauth-protected-resource/… to Drupal', (string) $requirements['lws_storage_resource_metadata']['description']);
+    $this->assertSame(RequirementSeverity::Warning, $this->severity($hooks, 'lws_storage_resource_metadata'));
+    $this->assertSame(RequirementSeverity::Warning, $this->severity($hooks, 'lws_storage_resource_metadata'));
+
+    // A storage without an authorization server has no metadata.
+    $this->config('lws_authz.settings')->set('authorization_server', 'gone')->save();
+    $this->assertArrayNotHasKey('lws_storage_resource_metadata', $hooks->runtime());
+  }
+
+  /**
+   * Tests that entry for a site below the root of its host.
+   *
+   * Clients ask for the metadata at the well-known segment before the base
+   * URL's path, where the web server or a proxy must send it to the site.
+   */
+  public function testResourceMetadataBelowRoot(): void {
+    $base = self::BASE . '/targets/drupal';
+    $this->config('lws.settings')->set('base_url', $base . '/')->save();
+    $this->storages->createStorage('alice', 'Alice');
+    $document = ['resource' => $base . '/lws/alice/', 'authorization_servers' => [self::ISSUER]];
+    $responses = new MockHandler([
+      new Response(200, ['Content-Type' => 'application/json'], (string) json_encode($document)),
+      new Response(404),
+    ]);
+    $this->container->set('http_client', new Client(['handler' => HandlerStack::create($responses)]));
+    $hooks = $this->container->get(LwsStorageRequirements::class);
+    $this->assertInstanceOf(LwsStorageRequirements::class, $hooks);
+    $this->assertSame(RequirementSeverity::OK, $this->severity($hooks, 'lws_storage_resource_metadata'));
+    $this->assertSame(self::BASE . '/.well-known/oauth-protected-resource/targets/drupal/lws/alice/', (string) $responses->getLastRequest()?->getUri());
+    $requirements = $hooks->runtime();
+    $this->assertSame(RequirementSeverity::Warning, $requirements['lws_storage_resource_metadata']['severity']);
+    $this->assertStringContainsString('send ' . self::BASE . '/.well-known/oauth-protected-resource/targets/drupal/… to ' . $base . '/.well-known/oauth-protected-resource/…,', (string) $requirements['lws_storage_resource_metadata']['description']);
+  }
+
 }

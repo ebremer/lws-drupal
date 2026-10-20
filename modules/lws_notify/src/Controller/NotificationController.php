@@ -65,6 +65,19 @@ final class NotificationController implements ContainerInjectionInterface {
   private const MEDIA_TYPES = [MediaType::LWS_JSON, MediaType::LD_JSON, MediaType::JSON];
 
   /**
+   * The profiles the listing is produced in, by media type.
+   *
+   * It is an LWS container, whose JSON-LD is in the LWS profile (LWS Core,
+   * LWS Profile).
+   */
+  private const LISTING_PROFILES = [MediaType::LD_JSON => [Vocabulary::LWS_PROFILE]];
+
+  /**
+   * The profiles a subscription is produced in: none; it is no container.
+   */
+  private const ENTRY_PROFILES = [MediaType::LD_JSON => []];
+
+  /**
    * The largest subscription request accepted, in bytes.
    */
   public const MAX_BYTES = 65536;
@@ -104,9 +117,10 @@ final class NotificationController implements ContainerInjectionInterface {
    */
   public function read(LwsTarget $lws_target, Request $request): Response {
     [$storage, $agent, $controls] = $this->prepare($lws_target, $request);
-    $type = MediaTypeNegotiator::negotiate($request->headers->get('Accept'), self::MEDIA_TYPES)
+    $profiles = $lws_target->recordId === NULL ? self::LISTING_PROFILES : self::ENTRY_PROFILES;
+    $type = MediaTypeNegotiator::negotiate($request->headers->get('Accept'), self::MEDIA_TYPES, $profiles)
       ?? throw LwsHttpException::notAcceptable(self::MEDIA_TYPES);
-    $contentType = $type->contentType([Vocabulary::LWS_CONTEXT]);
+    $contentType = $type->contentType();
     if ($lws_target->recordId === NULL) {
       return $this->listing($storage, $lws_target, $agent, $request, $contentType);
     }

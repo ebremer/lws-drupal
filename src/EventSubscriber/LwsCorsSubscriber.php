@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Drupal\lws\EventSubscriber;
 
 use Drupal\lws\Routing\LwsUrlParser;
+use Ebremer\Lws\Vocabulary;
 use Symfony\Component\EventDispatcher\EventSubscriberInterface;
 use Symfony\Component\HttpKernel\Event\ResponseEvent;
 use Symfony\Component\HttpKernel\KernelEvents;
@@ -13,8 +14,8 @@ use Symfony\Component\HttpKernel\KernelEvents;
  * Adds CORS headers to every response in the LWS URL space.
  *
  * That is every URL under the prefix, those of storages and those of the
- * authorization server's endpoints alike, and the authorization server's
- * metadata.
+ * authorization server's endpoints alike, the authorization server's
+ * metadata, and the protected resource metadata of resources.
  *
  * LWS clients run in browsers on other origins, and authenticate with bearer
  * tokens, never cookies, so any origin may read responses: the token, not the
@@ -92,7 +93,10 @@ final class LwsCorsSubscriber implements EventSubscriberInterface {
     $request = $event->getRequest();
     $path = $request->getPathInfo();
     $prefix = $this->parser->prefix();
-    if (!$event->isMainRequest() || !(($prefix !== '' && str_starts_with($path, $prefix . '/')) || in_array($path, self::METADATA_PATHS, TRUE))) {
+    // Protected resource metadata is at its well-known path followed by the
+    // resource's (RFC 9728 §3.1).
+    $metadata = in_array($path, self::METADATA_PATHS, TRUE) || str_starts_with($path . '/', Vocabulary::WELL_KNOWN_OAUTH_PROTECTED_RESOURCE . '/');
+    if (!$event->isMainRequest() || !(($prefix !== '' && str_starts_with($path, $prefix . '/')) || $metadata)) {
       return;
     }
     $headers = $event->getResponse()->headers;

@@ -95,6 +95,12 @@ final class AuthorizationSettingsForm extends ConfigFormBase {
       '#default_value' => $settings->get('clock_skew'),
       '#required' => TRUE,
     ];
+    $form['legacy_challenge'] = [
+      '#type' => 'checkbox',
+      '#title' => $this->t('Keep the challenge parameters of earlier drafts'),
+      '#description' => $this->t('A 401 names the protected resource metadata of the URL requested ("resource_metadata"), which names the authorization server. Also send "as_uri" (the authorization server) and "realm" (the storage), which clients written for the LWS drafts before 19 October 2026 look for instead.'),
+      '#default_value' => (bool) $settings->get('legacy_challenge'),
+    ];
 
     $form['local'] = [
       '#type' => 'details',
@@ -186,6 +192,7 @@ final class AuthorizationSettingsForm extends ConfigFormBase {
     $this->config('lws_authz.settings')
       ->set('authorization_server', (string) $form_state->getValue('authorization_server'))
       ->set('clock_skew', (int) $form_state->getValue('clock_skew'))
+      ->set('legacy_challenge', (bool) $form_state->getValue('legacy_challenge'))
       ->set('suites', array_values(array_filter((array) $form_state->getValue('suites'), 'is_string')))
       ->set('token_lifetime', (int) $form_state->getValue('token_lifetime'))
       ->set('rate_limits.client', (int) $form_state->getValue('rate_limit_client'))

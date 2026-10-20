@@ -57,6 +57,15 @@ final class IndexController implements ContainerInjectionInterface {
   private const MEDIA_TYPES = [MediaType::LWS_JSON, MediaType::LD_JSON, MediaType::JSON];
 
   /**
+   * The profiles the answers are produced in, by media type: none.
+   *
+   * Neither the type index nor a page of search results is a container
+   * (lws10-index), so neither is in the LWS profile, which is defined for
+   * container representations (LWS Core, LWS Profile).
+   */
+  private const PROFILES = [MediaType::LD_JSON => []];
+
+  /**
    * The largest filter accepted, in bytes.
    */
   public const MAX_BYTES = 65536;
@@ -136,7 +145,7 @@ final class IndexController implements ContainerInjectionInterface {
       'totalItems' => $page->total,
       'items' => array_map(fn (LwsResourceInterface $resource): array => $this->links->describe($storage, $resource), $page->resources),
     ];
-    return LwsResponse::json($body, $type->contentType([Vocabulary::LWS_CONTEXT]), $links, NULL, self::headers());
+    return LwsResponse::json($body, $type->contentType(), $links, NULL, self::headers());
   }
 
   /**
@@ -164,7 +173,7 @@ final class IndexController implements ContainerInjectionInterface {
       'totalItems' => $page->total,
       'items' => array_map(static fn (string $type): array => ['id' => $type], $page->types),
     ];
-    return LwsResponse::json($body, $type->contentType([Vocabulary::LWS_CONTEXT]), $links, NULL, self::headers());
+    return LwsResponse::json($body, $type->contentType(), $links, NULL, self::headers());
   }
 
   /**
@@ -181,7 +190,7 @@ final class IndexController implements ContainerInjectionInterface {
    *   406 when the client accepts none of MEDIA_TYPES.
    */
   private function negotiate(Request $request): NegotiatedType {
-    return MediaTypeNegotiator::negotiate($request->headers->get('Accept'), self::MEDIA_TYPES)
+    return MediaTypeNegotiator::negotiate($request->headers->get('Accept'), self::MEDIA_TYPES, self::PROFILES)
       ?? throw LwsHttpException::notAcceptable(self::MEDIA_TYPES);
   }
 

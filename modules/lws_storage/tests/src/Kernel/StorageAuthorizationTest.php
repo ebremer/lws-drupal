@@ -16,8 +16,11 @@ use Symfony\Component\HttpFoundation\Response;
 /**
  * Tests token validation and access at the storage (LWS Core §5.2.1, §5.2.4).
  *
- * Every 401 must carry a Bearer challenge with "as_uri" and "realm", and a
- * rejected token also an "error". A valid token without permission gets 403.
+ * Every 401 must carry a Bearer challenge whose "resource_metadata" is the
+ * URL of the protected resource metadata of the URL requested (RFC 9728), and
+ * a Link to the storage; a rejected token also an "error". By default the
+ * challenge also keeps "as_uri" and "realm", for clients of earlier drafts. A
+ * valid token without permission gets 403.
  */
 #[Group('lws')]
 #[RunTestsInSeparateProcesses]
@@ -30,11 +33,29 @@ final class StorageAuthorizationTest extends LwsStorageKernelTestBase {
   private const STORAGE = self::BASE . '/lws/alice/';
 
   /**
+   * The path of protected resource metadata, before the resource's path.
+   */
+  private const METADATA = '/.well-known/oauth-protected-resource';
+
+  /**
+   * The path and query of the last request sent.
+   */
+  private string $requested = '';
+
+  /**
    * {@inheritdoc}
    */
   protected function setUp(): void {
     parent::setUp();
     $this->storages->createStorage('alice', 'Alice', [self::ALICE]);
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  protected function send(string $method, string $path, array $headers = [], ?string $body = NULL): Response {
+    $this->requested = $path;
+    return parent::send($method, $path, $headers, $body);
   }
 
   /**
@@ -46,18 +67,23 @@ final class StorageAuthorizationTest extends LwsStorageKernelTestBase {
 
   /**
    * Asserts a 401 with a conforming challenge, and returns the challenge.
+   *
+   * Its resource_metadata names the metadata of the last URL requested: the
+   * well-known segment before its path.
    */
-  private function assertChallenge(Response $response, ?string $error = NULL, string $realm = self::STORAGE, string $asUri = self::ISSUER): AuthChallenge {
+  private function assertChallenge(Response $response, ?string $error = NULL, string $storage = self::STORAGE, string $issuer = self::ISSUER): AuthChallenge {
     $this->assertSame(401, $response->getStatusCode());
     $this->assertSame('application/problem+json', $response->headers->get('Content-Type'));
     $challenges = WwwAuthenticate::parse((string) $response->headers->get('WWW-Authenticate'));
     $this->assertCount(1, $challenges);
     $challenge = $challenges[0];
     $this->assertTrue($challenge->isScheme('Bearer'));
-    $this->assertSame($asUri, $challenge->asUri());
-    $this->assertSame($realm, $challenge->realm());
+    $this->assertSame(self::BASE . self::METADATA . $this->requested, $challenge->resourceMetadata());
+    // The parameters of earlier drafts, kept by default.
+    $this->assertSame($issuer, $challenge->asUri());
+    $this->assertSame($storage, $challenge->realm());
     $this->assertSame($error, $challenge->error());
-    $this->assertContains('<' . $realm . '>; rel="https://www.w3.org/ns/lws#storage"', $response->headers->all('link'));
+    $this->assertContains('<' . $storage . '>; rel="https://www.w3.org/ns/lws#storage"', $response->headers->all('link'));
     return $challenge;
   }
 
@@ -95,6 +121,9 @@ final class StorageAuthorizationTest extends LwsStorageKernelTestBase {
     $this->assertSame(200, $this->get('/lws/alice/root/', $this->token(self::ALICE, ['aud' => self::BASE . '/lws/alice']))->getStatusCode());
     // As does a single-valued array.
     $this->assertSame(200, $this->get('/lws/alice/root/', $this->token(self::ALICE, ['aud' => [self::STORAGE]]))->getStatusCode());
+    // And an array that includes it among others.
+    $audiences = ['https://another-storage.invalid/', self::STORAGE];
+    $this->assertSame(200, $this->get('/lws/alice/root/', $this->token(self::ALICE, ['aud' => $audiences]))->getStatusCode());
   }
 
   /**
@@ -133,9 +162,12 @@ final class StorageAuthorizationTest extends LwsStorageKernelTestBase {
       'not yet valid' => [['nbf' => $now + 3600], [], 'not valid yet'],
       'issued in the future' => [['iat' => $now + 3600, 'exp' => $now + 3900], [], 'issued in the future'],
       'wrong audience' => [['aud' => 'https://not-this-storage.invalid/'], [], 'not for this storage'],
-      'two audiences' => [['aud' => [self::STORAGE, 'https://another-storage.invalid/']], [], 'not for this storage'],
+      'others only' => [['aud' => ['https://other.invalid/', self::BASE . '/lws/bob/']], [], 'not for this storage'],
       'another storage' => [['aud' => self::BASE . '/lws/bob/'], [], 'not for this storage'],
+      'a storage within the URI' => [['aud' => [self::STORAGE . 'root/']], [], 'not for this storage'],
       'no audience' => [['aud' => NULL], [], 'not for this storage'],
+      'no audiences' => [['aud' => []], [], 'not for this storage'],
+      'an audience that is not a string' => [['aud' => [self::STORAGE, 42]], [], '"aud"'],
       'wrong issuer' => [['iss' => 'https://untrusted-issuer.invalid/'], [], 'not from this storage'],
       'no issuer' => [['iss' => NULL], [], 'not from this storage'],
       'unknown key' => [[], ['kid' => 'unknown'], 'signature does not verify'],
@@ -336,6 +368,96 @@ final class StorageAuthorizationTest extends LwsStorageKernelTestBase {
     $this->assertSame('GET, HEAD, POST, OPTIONS', $preflight->headers->get('Access-Control-Allow-Methods'));
     $this->assertContains('Authorization', array_map('trim', explode(',', (string) $preflight->headers->get('Access-Control-Allow-Headers'))));
     $this->assertSame('600', $preflight->headers->get('Access-Control-Max-Age'));
+  }
+
+  /**
+   * Tests that each challenge names the metadata of the URL requested.
+   *
+   * The URL as sent: its path still percent-encoded, as the client encoded
+   * it, and its query unchanged (RFC 9728 §3.1, §3.3).
+   */
+  public function testResourceMetadata(): void {
+    $this->agent = self::ALICE;
+    $text = ['Content-Type' => 'text/plain', 'Slug' => 'notes.txt'];
+    $this->assertSame(201, $this->send('POST', '/lws/alice/root/', $text, 'notes')->getStatusCode());
+    $this->agent = NULL;
+
+    $expected = [
+      // A container, and a data resource.
+      '/lws/alice/root/' => self::BASE . self::METADATA . '/lws/alice/root/',
+      '/lws/alice/root/notes.txt' => self::BASE . self::METADATA . '/lws/alice/root/notes.txt',
+      // A query, in the order sent.
+      '/lws/alice/root/?z=1&a=%20b' => self::BASE . self::METADATA . '/lws/alice/root/?z=1&a=%20b',
+      // Percent-encodings, in the case sent, and not normalised.
+      '/lws/alice/root/caf%c3%a9%20menu.txt' => self::BASE . self::METADATA . '/lws/alice/root/caf%c3%a9%20menu.txt',
+      '/lws/alice/root/%7Euser/' => self::BASE . self::METADATA . '/lws/alice/root/%7Euser/',
+    ];
+    foreach ($expected as $path => $metadata) {
+      $this->assertSame($metadata, $this->assertChallenge($this->get($path))->resourceMetadata(), $path);
+      $this->assertSame($metadata, $this->assertChallenge($this->get($path, 'not-a-token'), 'invalid_token')->resourceMetadata(), $path);
+    }
+    // HEAD, and writes.
+    $this->assertChallenge($this->send('HEAD', '/lws/alice/root/notes.txt'));
+    $this->assertChallenge($this->send('PUT', '/lws/alice/root/notes.txt', ['Content-Type' => 'text/plain'], 'changed'));
+    $this->assertChallenge($this->send('POST', '/lws/alice/root/', ['Content-Type' => 'text/plain'], 'new'));
+    $this->assertChallenge($this->send('DELETE', '/lws/alice/root/notes.txt'));
+    $this->assertSame('notes', $this->body($this->get('/lws/alice/root/notes.txt', $this->token(self::ALICE))));
+  }
+
+  /**
+   * Tests the challenge of a site whose base URL has a path.
+   *
+   * The metadata is at the well-known segment on the host, before the base
+   * URL's path and the request's.
+   */
+  public function testResourceMetadataBelowRoot(): void {
+    $base = self::BASE . '/sub';
+    $this->config('lws.settings')->set('base_url', $base)->save();
+    foreach (['/lws/alice/root/', '/lws/alice/root/a%20b?x=1'] as $path) {
+      $response = $this->get($path);
+      $this->assertSame(401, $response->getStatusCode());
+      $challenge = WwwAuthenticate::parse((string) $response->headers->get('WWW-Authenticate'))[0];
+      $this->assertSame(self::BASE . self::METADATA . '/sub' . $path, $challenge->resourceMetadata());
+      $this->assertSame($base . '/lws/alice/', $challenge->realm());
+      $this->assertContains('<' . $base . '/lws/alice/>; rel="https://www.w3.org/ns/lws#storage"', $response->headers->all('link'));
+    }
+  }
+
+  /**
+   * Tests the challenge parameters of the drafts before 19 October 2026.
+   *
+   * They follow resource_metadata by default, and go with
+   * lws_authz.settings:legacy_challenge off.
+   */
+  public function testLegacyChallenge(): void {
+    $metadata = self::BASE . self::METADATA . '/lws/alice/root/';
+    $this->assertSame('Bearer resource_metadata="' . $metadata . '", as_uri="' . self::ISSUER . '", realm="' . self::STORAGE . '"', $this->get('/lws/alice/root/')->headers->get('WWW-Authenticate'));
+
+    $this->config('lws_authz.settings')->set('legacy_challenge', FALSE)->save();
+    $response = $this->get('/lws/alice/root/');
+    $this->assertSame(401, $response->getStatusCode());
+    $this->assertSame('Bearer resource_metadata="' . $metadata . '"', $response->headers->get('WWW-Authenticate'));
+    $this->assertContains('<' . self::STORAGE . '>; rel="https://www.w3.org/ns/lws#storage"', $response->headers->all('link'));
+    $challenge = WwwAuthenticate::parse((string) $this->get('/lws/alice/root/', 'not-a-token')->headers->get('WWW-Authenticate'))[0];
+    $this->assertSame($metadata, $challenge->resourceMetadata());
+    $this->assertSame('invalid_token', $challenge->error());
+    $this->assertNotNull($challenge->errorDescription());
+    $this->assertNull($challenge->asUri());
+    $this->assertNull($challenge->realm());
+  }
+
+  /**
+   * Tests that the update hook keeps the parameters on existing sites.
+   */
+  public function testLegacyChallengeUpdate(): void {
+    $this->config('lws_authz.settings')->clear('legacy_challenge')->save();
+    $this->container->get('module_handler')->loadInclude('lws_authz', 'install');
+    $this->assertStringContainsString('as_uri', lws_authz_update_11005());
+    $this->assertTrue($this->config('lws_authz.settings')->get('legacy_challenge'));
+    // Run again, it changes nothing.
+    $this->config('lws_authz.settings')->set('legacy_challenge', FALSE)->save();
+    $this->assertStringContainsString('already', lws_authz_update_11005());
+    $this->assertFalse($this->config('lws_authz.settings')->get('legacy_challenge'));
   }
 
 }

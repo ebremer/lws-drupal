@@ -76,4 +76,35 @@ final class TypeIndexTest extends IndexKernelTestBase {
     $this->assertSame([self::T . 'Beta', self::LWS_DATA], $this->listed($this->as(NULL, 'GET', self::INDEX)));
   }
 
+  /**
+   * Tests that a rejected token is challenged, as anywhere in the storage.
+   */
+  public function testChallenge(): void {
+    $headers = ['Authorization' => 'Bearer not-a-token', 'Content-Type' => 'application/lws-query+json'];
+    foreach (['GET' => self::INDEX, 'QUERY' => self::SEARCH] as $method => $path) {
+      $response = $this->as(NULL, $method, $path, $headers, '{}');
+      $this->assertSame(401, $response->getStatusCode(), $method);
+      $challenge = (string) $response->headers->get('WWW-Authenticate');
+      $this->assertStringStartsWith('Bearer resource_metadata="' . self::BASE . '/.well-known/oauth-protected-resource' . $path . '"', $challenge);
+      $this->assertStringContainsString('error="invalid_token"', $challenge);
+    }
+  }
+
+  /**
+   * Tests that the answers never claim the LWS profile.
+   *
+   * Neither the type index nor a page of search results is a container, so
+   * neither is in the profile, and JSON-LD asked for in it is not offered.
+   */
+  public function testNoProfile(): void {
+    $this->create('root/', 'one', ['Person']);
+    $profile = 'application/ld+json; profile="https://www.w3.org/ns/lws/v1"';
+    $this->assertSame(406, $this->as(self::ALICE, 'GET', self::INDEX, ['Accept' => $profile])->getStatusCode());
+    $response = $this->as(self::ALICE, 'GET', self::INDEX, ['Accept' => $profile . ', application/ld+json;q=0.5']);
+    $this->assertSame('application/ld+json', $response->headers->get('Content-Type'));
+    $this->assertSame(406, $this->search(self::ALICE, ['type' => [self::T . 'Person']], ['Accept' => $profile])->getStatusCode());
+    $response = $this->search(self::ALICE, ['type' => [self::T . 'Person']], ['Accept' => $profile . ', application/lws+json;q=0.5']);
+    $this->assertSame('application/lws+json', $response->headers->get('Content-Type'));
+  }
+
 }

@@ -27,11 +27,13 @@ use Symfony\Component\HttpKernel\KernelEvents;
  * Renders errors in the LWS URL space as RFC 9457 problem details.
  *
  * A refusal of a request without a valid token becomes a 401 with a Bearer
- * challenge naming the storage as the realm and its authorization server as
- * "as_uri" (LWS Core §5.2.1). A refusal of a valid token stays a 403, or
- * becomes a 404 when lws.settings:conceal_existence is set (§9.5). A change
- * the database gave up on because of concurrent ones, a deadlock for example,
- * is a 503 with Retry-After rather than a 500.
+ * challenge whose "resource_metadata" is the URL of the protected resource
+ * metadata of the URL requested (RFC 9728), and a Link to the storage, whose
+ * URI a client asks a token for (LWS Core, Authorization Server Discovery).
+ * A refusal of a valid token stays a 403, or becomes a 404 when
+ * lws.settings:conceal_existence is set (§9.5). A change the database gave up
+ * on because of concurrent ones, a deadlock for example, is a 503 with
+ * Retry-After rather than a 500.
  */
 final class LwsExceptionSubscriber implements EventSubscriberInterface {
 
@@ -90,23 +92,19 @@ final class LwsExceptionSubscriber implements EventSubscriberInterface {
       $detail = 'Concurrent changes kept this one from completing; nothing was changed. Try again.';
     }
     $authentication = Authentication::fromRequest($request);
-    if (($status === 401 || $status === 403) && !$authentication->isAuthenticated() && $authentication->realm !== NULL) {
-      if ($authentication->asUri === NULL) {
-        // No token can be valid, so a challenge would send the client on a
-        // fruitless errand.
+    if (($status === 401 || $status === 403) && !$authentication->isAuthenticated() && $authentication->storageUri !== NULL) {
+      if ($authentication->issuer === NULL) {
+        // No token can be valid, and there is no protected resource metadata
+        // to name, so a challenge would send the client on a fruitless
+        // errand.
         $status = 503;
         $detail = 'This storage has no authorization server.';
       }
       else {
         $status = 401;
         $detail = $authentication->errorDescription;
-        $headers['WWW-Authenticate'] = BearerChallenge::format([
-          'as_uri' => $authentication->asUri,
-          'realm' => $authentication->realm,
-          'error' => $authentication->error,
-          'error_description' => $authentication->errorDescription,
-        ]);
-        $headers['Link'] = LinkHeader::format($authentication->realm, LinkRelation::STORAGE);
+        $headers['WWW-Authenticate'] = BearerChallenge::unauthorized(LwsUrlGenerator::resourceMetadataUri($this->urls->requestUri($request)), $authentication);
+        $headers['Link'] = LinkHeader::format($authentication->storageUri, LinkRelation::STORAGE);
       }
     }
     elseif ($status === 403 && $authentication->isAuthenticated() && $this->configFactory->get('lws.settings')->get('conceal_existence')) {

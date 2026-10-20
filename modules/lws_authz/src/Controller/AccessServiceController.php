@@ -65,6 +65,19 @@ final class AccessServiceController implements ContainerInjectionInterface {
   private const MEDIA_TYPES = [MediaType::LWS_JSON, MediaType::LD_JSON, MediaType::JSON];
 
   /**
+   * The profiles a listing is produced in, by media type.
+   *
+   * It is an LWS container, whose JSON-LD is in the LWS profile (LWS Core,
+   * LWS Profile).
+   */
+  private const LISTING_PROFILES = [MediaType::LD_JSON => [Vocabulary::LWS_PROFILE]];
+
+  /**
+   * The profiles an entry is produced in: none; it is no container.
+   */
+  private const ENTRY_PROFILES = [MediaType::LD_JSON => []];
+
+  /**
    * The largest document accepted, in bytes.
    */
   public const MAX_BYTES = 65536;
@@ -98,10 +111,11 @@ final class AccessServiceController implements ContainerInjectionInterface {
    */
   public function read(LwsTarget $lws_target, Request $request): Response {
     [$storage, $agent, $controls] = $this->prepare($lws_target, $request);
-    $type = MediaTypeNegotiator::negotiate($request->headers->get('Accept'), self::MEDIA_TYPES)
+    $profiles = $lws_target->recordId === NULL ? self::LISTING_PROFILES : self::ENTRY_PROFILES;
+    $type = MediaTypeNegotiator::negotiate($request->headers->get('Accept'), self::MEDIA_TYPES, $profiles)
       ?? throw LwsHttpException::notAcceptable(self::MEDIA_TYPES);
     if ($lws_target->recordId === NULL) {
-      return $this->listing($storage, $lws_target, $agent, $controls, $request, $type->contentType([Vocabulary::LWS_CONTEXT]));
+      return $this->listing($storage, $lws_target, $agent, $controls, $request, $type->contentType());
     }
     $record = $this->entry($storage, $lws_target, $agent, $controls);
     $document = $record->getDocument();
@@ -112,7 +126,7 @@ final class AccessServiceController implements ContainerInjectionInterface {
     ];
     $headers = ['Vary' => 'Accept', 'Allow' => implode(', ', $lws_target->allowedMethods())];
     // Entries never change: their content identifies them.
-    return LwsResponse::json($document, $type->contentType([Vocabulary::LWS_CONTEXT]), $links, LwsResponse::etag(Json::encode($document)), $headers);
+    return LwsResponse::json($document, $type->contentType(), $links, LwsResponse::etag(Json::encode($document)), $headers);
   }
 
   /**

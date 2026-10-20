@@ -60,3 +60,18 @@ function lws_authz_update_11004(): string {
   $widened = SchemaUpdates::widenToBigInteger(\Drupal::database(), \Drupal::keyValue('entity.storage_schema.sql'), 'lws_policy', 'lws_policy', 'not_after');
   return $widened ? 'Access policies may now end after 2038.' : 'Access policies could already end after 2038.';
 }
+
+/**
+ * Keeps "as_uri" and "realm" in 401 challenges, after "resource_metadata".
+ *
+ * The LWS drafts of 19 October 2026 replaced them with "resource_metadata"
+ * (RFC 9728); clients of the earlier drafts still look for them.
+ */
+function lws_authz_update_11005(): string {
+  $settings = \Drupal::configFactory()->getEditable('lws_authz.settings');
+  if ($settings->get('legacy_challenge') !== NULL) {
+    return 'The legacy challenge parameters were already configured.';
+  }
+  $settings->set('legacy_challenge', TRUE)->save();
+  return '401 challenges name the protected resource metadata, and still carry "as_uri" and "realm" for older clients; turn that off in the authorization settings.';
+}

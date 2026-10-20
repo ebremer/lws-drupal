@@ -8,6 +8,9 @@ lws_authz.settings:
     clock_skew:
       type: integer
       label: 'The clock skew allowed when checking the times in access tokens and credentials, in seconds.'
+    legacy_challenge:
+      type: boolean
+      label: 'Whether 401 challenges also carry "as_uri" and "realm", after "resource_metadata", for clients of the LWS drafts before 19 October 2026.'
     token_lifetime:
       type: integer
       label: 'The lifetime of the access tokens this site issues, in seconds.'
@@ -53,7 +56,7 @@ lws_authz.trusted_as.*:
       label: 'Label'
     issuer:
       type: uri
-      label: 'Issuer identifier: the "iss" of its tokens and the "as_uri" of challenges.'
+      label: 'Issuer identifier: the "iss" of its tokens, and the authorization server challenges send clients to.'
     jwks:
       type: string
       label: 'Pinned JSON Web Key Set. Empty to fetch the keys from the jwks_uri of its metadata.'

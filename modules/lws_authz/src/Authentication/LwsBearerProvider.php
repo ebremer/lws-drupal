@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Drupal\lws_authz\Authentication;
 
 use Drupal\Core\Authentication\AuthenticationProviderInterface;
+use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\lws\Agent\AgentUsersInterface;
 use Drupal\lws\Agent\Authentication;
 use Drupal\lws\Routing\LwsUrlParser;
@@ -12,6 +13,7 @@ use Drupal\lws\Storage\StorageRegistryInterface;
 use Drupal\lws_authz\AuthorizationServers;
 use Drupal\lws_authz\Token\AccessTokenValidator;
 use Drupal\lws_authz\Token\InvalidTokenException;
+use Ebremer\Lws\Vocabulary;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\HttpFoundation\Request;
 
@@ -20,12 +22,17 @@ use Symfony\Component\HttpFoundation\Request;
  *
  * It claims every request in the URL space, with or without a token, so that
  * no other provider applies there: in particular, a session cookie never
- * authenticates an LWS request. Elsewhere it never applies, which leaves
- * "Bearer" to other modules, such as simple_oauth.
+ * authenticates an LWS request. It also claims requests for protected
+ * resource metadata, which it leaves anonymous whatever they carry: clients
+ * ask for it because their token was refused, and no other provider may then
+ * refuse them. Elsewhere it never applies, which leaves "Bearer" to other
+ * modules, such as simple_oauth.
  *
  * It never rejects a request. It records the outcome on the request for the
- * access check, together with the realm and authorization server that a 401
- * challenge needs (DESIGN.md §5.4).
+ * access check, together with what a 401 needs: the storage, its
+ * authorization server, and whether the challenge keeps the parameters of the
+ * drafts before 19 October 2026 (lws_authz.settings:legacy_challenge;
+ * DESIGN.md §5.4).
  *
  * With lws_agent_users, an agent that acts as a Drupal user is that user for
  * the request, and carries what the user makes of it (AgentUsersInterface).
@@ -43,6 +50,7 @@ final class LwsBearerProvider implements AuthenticationProviderInterface {
     private readonly ?StorageRegistryInterface $storages,
     private readonly AuthorizationServers $servers,
     private readonly AccessTokenValidator $validator,
+    private readonly ConfigFactoryInterface $configFactory,
     private readonly LoggerInterface $logger,
     private readonly ?AgentUsersInterface $users = NULL,
   ) {}
@@ -51,7 +59,8 @@ final class LwsBearerProvider implements AuthenticationProviderInterface {
    * {@inheritdoc}
    */
   public function applies(Request $request) {
-    return $this->parser->parse($request->getPathInfo()) !== NULL;
+    $path = $request->getPathInfo();
+    return $this->parser->parse($path) !== NULL || str_starts_with($path . '/', Vocabulary::WELL_KNOWN_OAUTH_PROTECTED_RESOURCE . '/');
   }
 
   /**
@@ -61,7 +70,7 @@ final class LwsBearerProvider implements AuthenticationProviderInterface {
     $authentication = $this->outcome($request);
     $user = $authentication->isAuthenticated() ? $this->users?->find($authentication->agent, TRUE) : NULL;
     if ($user !== NULL) {
-      $authentication = Authentication::authenticated($user->agent, (string) $authentication->realm, (string) $authentication->asUri);
+      $authentication = Authentication::authenticated($user->agent, (string) $authentication->storageUri, (string) $authentication->issuer);
     }
     $request->attributes->set(Authentication::ATTRIBUTE, $authentication);
     if (!$authentication->isAuthenticated()) {
@@ -77,26 +86,27 @@ final class LwsBearerProvider implements AuthenticationProviderInterface {
     $slug = $this->parser->parse($request->getPathInfo())?->storage;
     $storage = $slug === NULL ? NULL : $this->storages?->get($slug);
     if ($storage === NULL) {
-      // Nothing to protect: the request will be answered with a 404.
+      // Nothing to protect: the request will be answered with a 404, or is
+      // for protected resource metadata.
       return Authentication::anonymous();
     }
     $server = $this->servers->forStorage($storage);
-    $realm = $storage->uri;
-    $asUri = $server?->getIssuer();
+    $issuer = $server?->getIssuer();
+    $legacy = (bool) $this->configFactory->get('lws_authz.settings')->get('legacy_challenge');
 
     $credentials = $request->headers->all('authorization');
     $bearer = array_values(array_filter($credentials, static fn (?string $value): bool => preg_match('/^Bearer(?: |$)/i', (string) $value) === 1));
     if ($bearer === []) {
-      return Authentication::anonymous($realm, $asUri);
+      return Authentication::anonymous($storage->uri, $issuer, $legacy);
     }
     if (count($credentials) > 1) {
-      return Authentication::failed('invalid_request', 'The request has more than one Authorization header.', $realm, $asUri);
+      return Authentication::failed('invalid_request', 'The request has more than one Authorization header.', $storage->uri, $issuer, $legacy);
     }
     if (preg_match(self::TOKEN, (string) $bearer[0], $matches) !== 1) {
-      return Authentication::failed('invalid_request', 'The Authorization header is not "Bearer" followed by a token.', $realm, $asUri);
+      return Authentication::failed('invalid_request', 'The Authorization header is not "Bearer" followed by a token.', $storage->uri, $issuer, $legacy);
     }
     if ($server === NULL) {
-      return Authentication::failed('invalid_token', 'This storage trusts no authorization server.', $realm);
+      return Authentication::failed('invalid_token', 'This storage trusts no authorization server.', $storage->uri);
     }
 
     try {
@@ -109,9 +119,9 @@ final class LwsBearerProvider implements AuthenticationProviderInterface {
         '@storage' => $storage->uri,
         '@reason' => $e->getMessage(),
       ]);
-      return Authentication::failed('invalid_token', $e->getMessage(), $realm, $asUri);
+      return Authentication::failed('invalid_token', $e->getMessage(), $storage->uri, $issuer, $legacy);
     }
-    return Authentication::authenticated($agent, $realm, (string) $asUri);
+    return Authentication::authenticated($agent, $storage->uri, (string) $issuer);
   }
 
 }

@@ -27,6 +27,24 @@ lws_authz.oauth_metadata:
   options:
     no_cache: TRUE
 
+# The protected resource metadata of resources in the LWS URL space (RFC 9728,
+# LWS Core "Protected Resource Metadata"), named by every 401 challenge. Each
+# resource has its own, at this path followed by the resource's path, which
+# ResourceMetadataPathProcessor maps here. It needs no token: lws_bearer
+# claims it and leaves it anonymous, so no Authorization header can make it
+# fail.
+lws_authz.resource_metadata:
+  path: '/.well-known/oauth-protected-resource'
+  defaults:
+    _controller: '\Drupal\lws_authz\Controller\ResourceMetadataController::metadata'
+  methods: [GET, HEAD]
+  requirements:
+    # Public: clients read it because their token was refused.
+    _access: 'TRUE'
+  options:
+    _auth: ['lws_bearer']
+    no_cache: TRUE
+
 lws_authz.settings:
   path: '/admin/config/services/lws/authorization-servers/settings'
   defaults:
