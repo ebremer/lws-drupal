@@ -40,7 +40,7 @@ final class OpenIdTest extends LwsStorageKernelTestBase {
 
   private const RSA_OP = 'https://rsa.example/realms/main';
 
-  private const WEBID = 'https://id.example/alice';
+  private const CID_URL = 'https://id.example/alice';
 
   private const CLIENT = 'https://app.example/id';
 
@@ -76,7 +76,7 @@ final class OpenIdTest extends LwsStorageKernelTestBase {
   protected function setUp(): void {
     parent::setUp();
     $this->config('lws_authz.settings')->set('authorization_server', 'local')->save();
-    $this->storages->createStorage('alice', 'Alice', [self::WEBID]);
+    $this->storages->createStorage('alice', 'Alice', [self::CID_URL]);
 
     $this->opKey = SigningKey::generateP256();
     $this->provider(self::OP, ['keys' => [$this->opKey->publicKey->jwk() + ['kid' => 'op-1', 'alg' => 'ES256']]]);
@@ -93,7 +93,7 @@ final class OpenIdTest extends LwsStorageKernelTestBase {
         $public + ['kid' => 'rsa-1', 'use' => 'sig', 'alg' => 'RS256'],
       ],
     ]);
-    $this->subject(self::WEBID, [self::OP, self::RSA_OP]);
+    $this->subject(self::CID_URL, [self::OP, self::RSA_OP]);
 
     $handler = function (RequestInterface $request): FulfilledPromise {
       $url = (string) $request->getUri();
@@ -182,7 +182,7 @@ final class OpenIdTest extends LwsStorageKernelTestBase {
     $now = time();
     $claims += [
       'iss' => self::OP,
-      'sub' => self::WEBID,
+      'sub' => self::CID_URL,
       'azp' => self::CLIENT,
       'aud' => [self::CLIENT, self::BASE],
       'iat' => $now,
@@ -210,7 +210,7 @@ final class OpenIdTest extends LwsStorageKernelTestBase {
     $now = time();
     $claims += [
       'iss' => self::RSA_OP,
-      'sub' => self::WEBID,
+      'sub' => self::CID_URL,
       'azp' => self::CLIENT,
       'aud' => self::CLIENT,
       'iat' => $now,
@@ -258,7 +258,7 @@ final class OpenIdTest extends LwsStorageKernelTestBase {
     $this->assertIsString($token);
     $claims = Jwt::decodeClaims($token);
     $read = $this->send('GET', '/lws/alice/root/', ['Authorization' => 'Bearer ' . $token]);
-    $this->assertSame($claims['sub'] === self::WEBID ? 200 : 403, $read->getStatusCode());
+    $this->assertSame($claims['sub'] === self::CID_URL ? 200 : 403, $read->getStatusCode());
     return $claims;
   }
 
@@ -291,13 +291,13 @@ final class OpenIdTest extends LwsStorageKernelTestBase {
     $this->assertContains('https', $metadata['subject_identifier_types_supported']);
 
     $claims = $this->assertIssued($this->exchange($this->idToken()));
-    $this->assertSame(self::WEBID, $claims['sub']);
+    $this->assertSame(self::CID_URL, $claims['sub']);
     $this->assertSame(self::CLIENT, $claims['client_id']);
     $this->assertSame(self::BASE, $claims['iss']);
     $this->assertSame([
       self::OP . '/.well-known/openid-configuration',
       self::OP . '/certs',
-      self::WEBID,
+      self::CID_URL,
     ], $this->fetched);
     // Keys and documents are cached.
     $this->assertIssued($this->exchange($this->idToken(['aud' => self::BASE . '/'])));
@@ -313,7 +313,7 @@ final class OpenIdTest extends LwsStorageKernelTestBase {
     $this->assertStringContainsString('"aud" must include', $this->assertRefused($this->exchange($this->rsaIdToken())));
     $this->trust(['require_as_audience' => FALSE]);
     $claims = $this->assertIssued($this->exchange($this->rsaIdToken()));
-    $this->assertSame(self::WEBID, $claims['sub']);
+    $this->assertSame(self::CID_URL, $claims['sub']);
     // The client must still be among the audiences.
     $this->assertStringContainsString('azp', $this->assertRefused($this->exchange($this->rsaIdToken(['aud' => 'https://other.example/id']))));
   }
@@ -367,7 +367,7 @@ final class OpenIdTest extends LwsStorageKernelTestBase {
     $this->assertStringContainsString('does not verify', $this->assertRefused($this->exchange($this->idToken([], [], SigningKey::generateP256()))));
     $unsigned = implode('.', array_slice(explode('.', $this->idToken([], ['alg' => 'none'])), 0, 2)) . '.';
     $this->assertRefused($this->exchange($unsigned));
-    $this->assertNotContains(self::WEBID, $this->fetched);
+    $this->assertNotContains(self::CID_URL, $this->fetched);
 
     // A key ID the cached keys lack fetches them again, once a minute.
     $this->assertRefused($this->exchange($this->idToken([], ['kid' => 'op-2'])));
@@ -387,7 +387,7 @@ final class OpenIdTest extends LwsStorageKernelTestBase {
     $this->provider('https://rogue.example', ['keys' => [$this->opKey->publicKey->jwk() + ['kid' => 'op-1']]]);
     $this->assertStringContainsString('does not name https://rogue.example', $this->assertRefused($this->exchange($this->idToken(['iss' => 'https://rogue.example']))));
     // A document that is not the subject's.
-    $this->documents['https://id.example/bob'] = $this->documents[self::WEBID];
+    $this->documents['https://id.example/bob'] = $this->documents[self::CID_URL];
     $this->assertStringContainsString('"id" differs', $this->assertRefused($this->exchange($this->idToken(['sub' => 'https://id.example/bob']))));
     // A subject with no document.
     $this->assertRefused($this->exchange($this->idToken(['sub' => 'https://id.example/nobody'])));

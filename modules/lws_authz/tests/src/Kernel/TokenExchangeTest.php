@@ -44,7 +44,7 @@ final class TokenExchangeTest extends LwsStorageKernelTestBase {
   /**
    * An agent with an HTTPS identifier.
    */
-  private const WEBID = 'https://id.example/agent';
+  private const CID_URL = 'https://id.example/agent';
 
   private const JWT = 'urn:ietf:params:oauth:token-type:jwt';
 
@@ -82,7 +82,7 @@ final class TokenExchangeTest extends LwsStorageKernelTestBase {
     $this->agentKey = SigningKey::generateP256();
     $this->didKeyAgent = DidKey::did($this->agentKey->publicKey);
     $this->config('lws_authz.settings')->set('authorization_server', 'local')->save();
-    $this->storages->createStorage('alice', 'Alice', [$this->didKeyAgent, self::WEBID]);
+    $this->storages->createStorage('alice', 'Alice', [$this->didKeyAgent, self::CID_URL]);
 
     $handler = function (RequestInterface $request): FulfilledPromise {
       $url = (string) $request->getUri();
@@ -448,22 +448,22 @@ final class TokenExchangeTest extends LwsStorageKernelTestBase {
    */
   public function testHttpsSubject(): void {
     $key = SigningKey::generateP256();
-    $document = ControlledIdentifierDocument::create(self::WEBID, $key->publicKey, 'key-1');
-    $this->documents[self::WEBID] = [200, json_encode($document, JSON_THROW_ON_ERROR)];
-    $credential = fn (array $header = []) => $this->credential([], $header + ['kid' => 'key-1'], $key, self::WEBID);
+    $document = ControlledIdentifierDocument::create(self::CID_URL, $key->publicKey, 'key-1');
+    $this->documents[self::CID_URL] = [200, json_encode($document, JSON_THROW_ON_ERROR)];
+    $credential = fn (array $header = []) => $this->credential([], $header + ['kid' => 'key-1'], $key, self::CID_URL);
 
     $token = $this->assertIssued($this->tokenRequest($this->exchange($credential())));
-    $this->assertSame(self::WEBID, Jwt::decodeClaims($token)['sub']);
+    $this->assertSame(self::CID_URL, Jwt::decodeClaims($token)['sub']);
     $this->assertSame(200, $this->send('GET', '/lws/alice/root/', ['Authorization' => 'Bearer ' . $token])->getStatusCode());
     // The document's full method ID works as the kid too, and comes from the
     // cache.
-    $this->assertIssued($this->tokenRequest($this->exchange($credential(['kid' => self::WEBID . '#key-1']))));
-    $this->assertSame([self::WEBID], $this->fetched);
+    $this->assertIssued($this->tokenRequest($this->exchange($credential(['kid' => self::CID_URL . '#key-1']))));
+    $this->assertSame([self::CID_URL], $this->fetched);
     // A kid that names nothing.
     $this->assertOauthError($this->tokenRequest($this->exchange($credential(['kid' => 'key-2']))), 'invalid_request');
 
     // A document that is not the subject's.
-    $mismatched = json_encode(['id' => self::WEBID] + $document, JSON_THROW_ON_ERROR);
+    $mismatched = json_encode(['id' => self::CID_URL] + $document, JSON_THROW_ON_ERROR);
     $this->documents['https://id.example/other'] = [200, $mismatched];
     $other = $this->credential([], ['kid' => 'key-1'], $key, 'https://id.example/other');
     $response = $this->tokenRequest($this->exchange($other));
@@ -491,9 +491,9 @@ final class TokenExchangeTest extends LwsStorageKernelTestBase {
   public function testHttpsSubjectMethods(): void {
     $key = SigningKey::generateP256();
     $method = [
-      'id' => self::WEBID . '#key-1',
+      'id' => self::CID_URL . '#key-1',
       'type' => 'JsonWebKey',
-      'controller' => self::WEBID,
+      'controller' => self::CID_URL,
       'publicKeyJwk' => $key->publicKey->jwk() + ['kid' => 'key-1', 'alg' => 'ES256'],
     ];
     $cases = [
@@ -508,7 +508,7 @@ final class TokenExchangeTest extends LwsStorageKernelTestBase {
     foreach ($cases as $name => [$members, $status]) {
       $subject = 'https://id.example/' . str_replace(' ', '-', $name);
       $document = json_encode(['@context' => ['https://www.w3.org/ns/cid/v1'], 'id' => $subject] + $members, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
-      $this->documents[$subject] = [200, str_replace(self::WEBID, $subject, $document)];
+      $this->documents[$subject] = [200, str_replace(self::CID_URL, $subject, $document)];
       $response = $this->tokenRequest($this->exchange($this->credential([], ['kid' => 'key-1'], $key, $subject)));
       $this->assertSame($status, $response->getStatusCode(), $name . ': ' . $response->getContent());
     }

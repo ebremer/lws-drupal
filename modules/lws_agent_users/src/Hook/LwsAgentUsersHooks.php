@@ -46,7 +46,7 @@ final class LwsAgentUsersHooks {
     }
     $fields[AgentUsers::URI_FIELD] = BaseFieldDefinition::create('uri')
       ->setLabel($this->t('LWS agent URI'))
-      ->setDescription($this->t('The LWS agent that acts as this user, with its access tokens, such as a WebID or a DID. A user has at most one, and an agent acts as at most one user.'))
+      ->setDescription($this->t('The LWS agent that acts as this user, with its access tokens, such as a CID URL or a DID. A user has at most one, and an agent acts as at most one user.'))
       ->setSetting('max_length', AgentUsers::MAX_URI_BYTES)
       ->addConstraint('LwsAgentUri')
       ->setDisplayOptions('form', ['type' => 'uri', 'weight' => 20]);

@@ -84,7 +84,7 @@ final class ShareForm extends FormBase {
     $form['share']['agent'] = [
       '#type' => 'url',
       '#title' => $this->t('Agent'),
-      '#description' => $this->t('The URI that identifies the agent, the "sub" of its access tokens, such as a WebID or a did:key.'),
+      '#description' => $this->t('The URI that identifies the agent, the "sub" of its access tokens, such as a CID URL or a did:key.'),
       '#maxlength' => 2048,
       '#states' => ['visible' => [':input[name="who"]' => ['value' => 'agent']]],
     ];
