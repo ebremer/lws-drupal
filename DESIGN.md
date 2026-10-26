@@ -2511,8 +2511,8 @@ targets:
     adapter: env
     capabilities: [Authentication, HarnessIssuedTokens, ReachableFixtures]   # + SamlTrust after A5
     properties:
-      webid.alice: https://lws.ddev.site/lws/agents/<alice-uuid>   # or a did:key via didkey.jwk.alice
-      webid.bob: https://lws.ddev.site/lws/agents/<bob-uuid>
+      cidUrl.alice: https://lws.ddev.site/lws/agents/<alice-uuid>  # or a did:key via didkey.jwk.alice
+      cidUrl.bob: https://lws.ddev.site/lws/agents/<bob-uuid>
       fixtures.baseUrl: https://touchstone-fixtures.ddev.site/
 ```
 
